@@ -1,584 +1,519 @@
+const functions = require('firebase-functions');
+const admin = require('firebase-admin');
+const pdf = require('pdf-parse');
+const mammoth = require('mammoth');
+
+admin.initializeApp();
+const db = admin.firestore();
+
 // =========================================
-// STORAGE MANAGER (encapsula Firestore)
+// 1. DETECCIÓN DE SIMILITUD ENTRE PLANIFICACIONES
 // =========================================
-const StorageManager = {
-    db: null,
-    init(dbInstance) { this.db = dbInstance; },
-    async getUser(uid) {
-        const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
-        return await getDoc(doc(this.db, "users", uid));
-    },
-    async saveUser(uid, data) {
-        const { doc, setDoc } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
-        return await setDoc(doc(this.db, "users", uid), data, { merge: true });
-    },
-    async loadEvents(uid) {
-        const { collection, getDocs } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
-        const snapshot = await getDocs(collection(this.db, "users", uid, "events"));
-        const events = {};
-        snapshot.forEach(doc => {
-            const data = doc.data();
-            const dateKey = `${data.day}-${data.month}-${data.year}`;
-            if (!events[dateKey]) events[dateKey] = [];
-            events[dateKey].push({ id: doc.id, ...data });
+function calcularSimilitud(texto1, texto2) {
+    const palabras1 = new Set(texto1.toLowerCase().split(/\s+/).filter(p => p.length > 3));
+    const palabras2 = new Set(texto2.toLowerCase().split(/\s+/).filter(p => p.length > 3));
+    const interseccion = [...palabras1].filter(p => palabras2.has(p)).length;
+    const union = new Set([...palabras1, ...palabras2]).size;
+    return union === 0 ? 0 : interseccion / union;
+}
+
+exports.checkSimilarPlan = functions.https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Debe iniciar sesión.');
+    const { texto, materia } = data;
+    const uid = context.auth.uid;
+    const snapshot = await db.collection('users').doc(uid).collection('planificaciones')
+        .where('materia', '==', materia).limit(10).get();
+    let maxSimilitud = 0;
+    snapshot.forEach(doc => {
+        const existente = `${doc.data().tema || ''} ${doc.data().fundamentacion || ''}`;
+        const sim = calcularSimilitud(texto, existente);
+        if (sim > maxSimilitud) maxSimilitud = sim;
+    });
+    return { similitud: maxSimilitud, alerta: maxSimilitud > 0.7 };
+});
+
+// =========================================
+// 2. SISTEMA DE RECOMENDACIÓN DE TEMAS
+// =========================================
+exports.suggestNextTopic = functions.https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Debe iniciar sesión.');
+    const { materia } = data;
+    const uid = context.auth.uid;
+    const snapshot = await db.collection('users').doc(uid).collection('planificaciones')
+        .where('materia', '==', materia).orderBy('createdAt', 'desc').limit(5).get();
+    const temas = [];
+    snapshot.forEach(doc => temas.push(doc.data().tema));
+    const conteo = {};
+    snapshot.forEach(doc => {
+        const palabras = (doc.data().tema || '').toLowerCase().split(/\s+/).filter(p => p.length > 3);
+        palabras.forEach(p => { conteo[p] = (conteo[p] || 0) + 1; });
+    });
+    const sugeridas = Object.entries(conteo).sort((a, b) => b[1] - a[1]).slice(0, 3).map(e => e[0]);
+    return { temasAnteriores: temas, palabrasClave: sugeridas };
+});
+
+// =========================================
+// 3. GENERADOR DE EXÁMENES
+// =========================================
+exports.generateExam = functions.https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Debe iniciar sesión.');
+    const { tema, contenidos, cantidad = 5 } = data;
+    const conceptos = (contenidos || tema).split(/[.,;:]/).filter(c => c.trim().length > 10);
+    const preguntas = [];
+    for (let i = 0; i < Math.min(cantidad, conceptos.length); i++) {
+        const tipo = i % 3;
+        if (tipo === 0) preguntas.push({
+            tipo: 'multiple_choice',
+            pregunta: `¿Cuál de las siguientes opciones es correcta respecto a "${conceptos[i].trim().substring(0, 50)}..."?`,
+            opciones: ['Opción A', 'Opción B', 'Opción C', 'Opción D'],
+            respuesta: 0
         });
-        return events;
-    },
-    async addEvent(uid, eventData) {
-        const { collection, addDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
-        return await addDoc(collection(this.db, "users", uid, "events"), { ...eventData, createdAt: serverTimestamp() });
-    },
-    async updateEvent(uid, eventId, newData) {
-        const { doc, updateDoc } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
-        return await updateDoc(doc(this.db, "users", uid, "events", eventId), newData);
-    },
-    async deleteEvent(uid, eventId) {
-        const { doc, deleteDoc } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
-        return await deleteDoc(doc(this.db, "users", uid, "events", eventId));
-    },
-    async addPlanificacion(uid, data) {
-        const { collection, addDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
-        return await addDoc(collection(this.db, "users", uid, "planificaciones"), { ...data, createdAt: serverTimestamp() });
+        else if (tipo === 1) preguntas.push({
+            tipo: 'verdadero_falso',
+            pregunta: `"${conceptos[i].trim().substring(0, 60)}..." ¿Es verdadero o falso?`,
+            respuesta: true
+        });
+        else preguntas.push({
+            tipo: 'desarrollo',
+            pregunta: `Desarrollá el siguiente concepto: ${conceptos[i].trim().substring(0, 60)}...`
+        });
     }
-};
+    return { tema, preguntas, total: preguntas.length };
+});
 
 // =========================================
-// FIREBASE
+// 4. DISTRIBUCIÓN HORARIA
 // =========================================
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { getFirestore, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js";
-
-const firebaseConfig = {
-    apiKey: "AIzaSyAYyYcI6lA5g_BPr54LJyklO5sXVX9LWpU",
-    authDomain: "planificar-arg.firebaseapp.com",
-    projectId: "planificar-arg",
-    storageBucket: "planificar-arg.firebasestorage.app",
-    messagingSenderId: "93716013797",
-    appId: "1:93716013797:web:c864f875ddd9395402aa0c",
-    measurementId: "G-CY095QXHD9"
-};
-
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const functions = getFunctions(app);
-const provider = new GoogleAuthProvider();
-StorageManager.init(db);
+exports.calculateHourDistribution = functions.https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Debe iniciar sesión.');
+    const { contenidos, cargaHoraria } = data;
+    const items = contenidos.filter(c => c && c.trim().length > 5);
+    if (items.length === 0 || !cargaHoraria) return { distribucion: [] };
+    const horasPorItem = Math.floor(cargaHoraria / items.length);
+    const resto = cargaHoraria % items.length;
+    return {
+        distribucion: items.map((item, i) => ({
+            contenido: item,
+            horas: horasPorItem + (i < resto ? 1 : 0)
+        })),
+        totalHoras: cargaHoraria
+    };
+});
 
 // =========================================
-// ESTADO GLOBAL
+// 5. HISTORIAL DE VERSIONES (se activa solo con onWrite)
 // =========================================
-let currentPlan = 'inicial';
-let isUserLoggedIn = false;
-let trialEndDate = null;
-let ultimaPlanificacionId = null;
-const TRIAL_DAYS = 3;
-const WHATSAPP_NUMBER = "5492215555704";
-const GOOGLE_CLIENT_ID = "TU_CLIENT_ID.apps.googleusercontent.com"; // Reemplazar con el real
-
-const landingPage = document.getElementById('landingPage');
-const appContent = document.getElementById('appContent');
-const landingLoginBtn = document.getElementById('landingLoginBtn');
-const appLogoutBtn = document.getElementById('appLogoutBtn');
-const trialBanner = document.getElementById('trialBanner');
-
-// =========================================
-// AUTENTICACIÓN
-// =========================================
-async function initAuth() {
-    onAuthStateChanged(auth, async (user) => {
-        if (user) {
-            isUserLoggedIn = true;
-            localStorage.setItem('userEmail', user.email);
-            localStorage.setItem('userUid', user.uid);
-            landingPage.style.display = 'none';
-            appContent.style.display = 'block';
-            await loadUserData(user.uid);
-        } else {
-            isUserLoggedIn = false;
-            trialEndDate = null;
-            currentPlan = 'inicial';
-            landingPage.style.display = 'flex';
-            appContent.style.display = 'none';
-            updatePlanUI();
-            updateTrialBanner();
-            updateGenerateButtonState();
-        }
+exports.trackPlanVersion = functions.firestore
+    .document('users/{userId}/planificaciones/{planId}')
+    .onWrite(async (change, context) => {
+        const before = change.before.data();
+        const after = change.after.data();
+        if (!before || !after) return;
+        if (JSON.stringify(before) === JSON.stringify(after)) return;
+        await db.collection('users').doc(context.params.userId)
+            .collection('planificaciones').doc(context.params.planId)
+            .collection('versions').add({
+                data: before,
+                changedAt: admin.firestore.FieldValue.serverTimestamp()
+            });
     });
-    landingLoginBtn.addEventListener('click', async () => {
-        try { await signInWithPopup(auth, provider); }
-        catch (error) { alert('Error al iniciar sesión: ' + error.message); }
-    });
-    appLogoutBtn.addEventListener('click', async () => { await signOut(auth); });
-}
-
-async function loadUserData(uid) {
-    try {
-        const docSnap = await StorageManager.getUser(uid);
-        const now = new Date();
-        if (docSnap.exists()) {
-            const data = docSnap.data();
-            currentPlan = data.plan || 'inicial';
-            if (data.trialEnd) trialEndDate = data.trialEnd.toDate ? data.trialEnd.toDate() : new Date(data.trialEnd);
-        } else {
-            trialEndDate = new Date(now.getTime() + TRIAL_DAYS * 24 * 60 * 60 * 1000);
-            currentPlan = 'inicial';
-            await StorageManager.saveUser(uid, { email: auth.currentUser.email, plan: 'inicial', createdAt: serverTimestamp(), trialEnd: trialEndDate });
-        }
-        const isTrialActive = trialEndDate && now <= trialEndDate;
-        toggleFeatures(isTrialActive || currentPlan !== 'inicial');
-    } catch (error) { currentPlan = 'inicial'; toggleFeatures(false); }
-    localStorage.setItem('plan', currentPlan);
-    updatePlanUI();
-    updateTrialBanner();
-    updateGenerateButtonState();
-    await renderCalendar();
-}
-
-function toggleFeatures(enable) { const btn = document.getElementById('btnGenerate'); if (btn) btn.disabled = !enable; }
-function updateGenerateButtonState() { const btn = document.getElementById('btnGenerate'); if (btn) btn.disabled = false; }
-
-function updateTrialBanner() {
-    if (!trialBanner || !isUserLoggedIn) { trialBanner.style.display = 'none'; return; }
-    const now = new Date();
-    if (trialEndDate && now <= trialEndDate && currentPlan === 'inicial') {
-        const diff = trialEndDate - now;
-        const hoursLeft = Math.ceil(diff / (1000 * 60 * 60));
-        trialBanner.style.display = 'block';
-        if (hoursLeft <= 24) { trialBanner.classList.add('urgent'); trialBanner.innerHTML = `⏰ <strong>¡Tu prueba termina hoy!</strong>`; }
-        else { trialBanner.classList.remove('urgent'); trialBanner.innerHTML = `🎁 Te quedan <strong>${Math.ceil(diff / 86400000)} día(s)</strong> de prueba gratuita.`; }
-    } else if (trialEndDate && now > trialEndDate && currentPlan === 'inicial') {
-        trialBanner.classList.add('urgent'); trialBanner.style.display = 'block';
-        trialBanner.innerHTML = `⏰ Tu prueba gratuita finalizó. <strong>Elegí un plan pago</strong> para continuar.`;
-    } else { trialBanner.style.display = 'none'; }
-}
 
 // =========================================
-// PLANES Y CONTACTO
+// 6. CONSOLIDACIÓN DE PLANIFICACIONES
 // =========================================
-function contactWhatsApp(plan) {
-    window.open(`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(`Hola, quiero contratar el ${plan === 'maestro' ? 'Plan Maestro' : 'Plan Profesor'}.`)}`, '_blank');
-}
-async function setPlan(plan) {
-    if (plan === currentPlan) return;
-    currentPlan = plan; localStorage.setItem('plan', plan);
-    const uid = localStorage.getItem('userUid');
-    if (uid) { try { await StorageManager.saveUser(uid, { plan }); } catch (error) {} }
-    alert(`✅ Cambiaste a ${plan === 'inicial' ? 'Plan Inicial' : plan === 'maestro' ? 'Plan Maestro' : 'Plan Profesor'}.`);
-    updatePlanUI(); updateTrialBanner(); updateGenerateButtonState();
-}
-function isPlanSufficient(requiredPlan) { return { inicial: 0, maestro: 1, profesor: 2 }[currentPlan] >= { inicial: 0, maestro: 1, profesor: 2 }[requiredPlan]; }
-
-function updatePlanUI() {
-    document.querySelectorAll('.plan-card').forEach(card => {
-        const planId = card.dataset.plan;
-        const button = card.querySelector('.plan-btn');
-        if (planId === currentPlan) { card.classList.add('active-plan'); button.textContent = '✓ Actual'; button.className = planId === 'inicial' ? 'plan-btn btn-outline' : 'plan-btn btn-filled'; }
-        else { card.classList.remove('active-plan'); button.textContent = planId === 'inicial' ? 'Elegir' : 'Contratar'; button.className = planId === 'inicial' ? 'plan-btn btn-outline' : 'plan-btn btn-filled'; }
-    });
-    document.querySelectorAll('#headerPlanBadges .plan-badge-new').forEach(badge => badge.classList.toggle('active-header', badge.dataset.plan === currentPlan));
-    const tipRecursos = document.getElementById('tipRecursos'); if (tipRecursos) tipRecursos.style.display = (currentPlan === 'profesor') ? 'none' : '';
-    document.querySelectorAll('[data-min-plan]').forEach(el => el.classList.toggle('locked', !isPlanSufficient(el.dataset.minPlan)));
-}
-
-function handleRestrictedClick(action) { alert('🔒 Esta función está disponible a partir del Plan Maestro.'); }
-
-// =========================================
-// MANEJO DE ARCHIVO ADJUNTO
-// =========================================
-let archivoProgramaSeleccionado = null;
-
-function toggleAdjuntarArchivo() {
-    const chk = document.getElementById('chkAdjuntarArchivo');
-    const field = document.getElementById('archivoProgramaField');
-    const infoIA = document.getElementById('infoIA');
-    if (chk.checked) {
-        field.classList.add('show'); infoIA.style.display = 'block';
-        document.getElementById('jurisdiccionIA').textContent = document.getElementById('jurisdiccion').value || 'tu provincia';
-        document.getElementById('nivelIA').textContent = document.getElementById('nivel').value || 'tu nivel';
-        document.getElementById('chkProgramaPropio').checked = false;
-        document.getElementById('programaPropioField').classList.remove('show');
-    } else { field.classList.remove('show'); archivoProgramaSeleccionado = null; document.getElementById('fileInfo').textContent = ''; if (!document.getElementById('chkProgramaPropio').checked) infoIA.style.display = 'none'; }
-}
-
-function handleFileSelect(event) {
-    const file = event.target.files[0];
-    if (!file) return;
-    if (file.size > 50 * 1024 * 1024) { alert('El archivo es demasiado grande. Máximo 50 MB.'); event.target.value = ''; return; }
-    if (!['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'].includes(file.type)) { alert('Formato no soportado.'); event.target.value = ''; return; }
-    archivoProgramaSeleccionado = file;
-    document.getElementById('fileInfo').innerHTML = `✅ Archivo seleccionado: <strong>${file.name}</strong> (${(file.size / 1024 / 1024).toFixed(1)} MB)`;
-}
-
-// =========================================
-// WIZARD
-// =========================================
-let currentStep = 1;
-const totalSteps = 4;
-
-function updateCicloOptions() {
-    const nivel = document.getElementById('nivel').value;
-    const cicloSelect = document.getElementById('ciclo');
-    document.getElementById('cicloGroup').style.display = nivel ? 'flex' : 'none';
-    document.getElementById('anioGroup').style.display = 'none';
-    cicloSelect.innerHTML = '<option value="">Seleccionar...</option>';
-    document.getElementById('anio').innerHTML = '<option value="">Primero seleccioná el ciclo</option>';
-    if (!nivel) return;
-    if (nivel === 'Primario') cicloSelect.innerHTML += '<option value="1Ciclo">1° Ciclo (1°,2°,3°)</option><option value="2Ciclo">2° Ciclo (4°,5°,6°)</option>';
-    else if (nivel === 'Secundario') cicloSelect.innerHTML += '<option value="Basico">Ciclo Básico (1°,2°,3°)</option><option value="Orientado">Ciclo Orientado (4°,5°,6°)</option>';
-    else if (nivel === 'Inicial') cicloSelect.innerHTML += '<option value="Sala">Salas (3,4,5 años)</option>';
-}
-
-function updateAnioOptions() {
-    const nivel = document.getElementById('nivel').value;
-    const ciclo = document.getElementById('ciclo').value;
-    const anioSelect = document.getElementById('anio');
-    document.getElementById('anioGroup').style.display = ciclo ? 'flex' : 'none';
-    if (!ciclo) return;
-    anioSelect.innerHTML = '<option value="">Seleccionar...</option>';
-    if (nivel === 'Primario') { const anios = ciclo === '1Ciclo' ? ['1°','2°','3°'] : ['4°','5°','6°']; anios.forEach(a => anioSelect.innerHTML += `<option value="${a}">${a} Grado</option>`); }
-    else if (nivel === 'Secundario') { const anios = ciclo === 'Basico' ? ['1°','2°','3°'] : ['4°','5°','6°']; anios.forEach(a => anioSelect.innerHTML += `<option value="${a}">${a} Año</option>`); }
-    else if (nivel === 'Inicial') { ['3','4','5'].forEach(a => anioSelect.innerHTML += `<option value="${a}">${a} Años</option>`); }
-}
-
-function toggleProgramaPropio() {
-    const chk = document.getElementById('chkProgramaPropio');
-    const field = document.getElementById('programaPropioField');
-    const infoIA = document.getElementById('infoIA');
-    if (!chk) return;
-    if (chk.checked) { field.classList.add('show'); infoIA.style.display = 'block'; document.getElementById('chkAdjuntarArchivo').checked = false; document.getElementById('archivoProgramaField').classList.remove('show'); archivoProgramaSeleccionado = null; document.getElementById('fileInfo').textContent = ''; }
-    else { field.classList.remove('show'); if (!document.getElementById('chkAdjuntarArchivo').checked) infoIA.style.display = 'none'; }
-}
-
-function changeStep(direction) {
-    if (direction === 1 && !validateStep(currentStep)) { alert('Por favor completá los campos obligatorios (*)'); return; }
-    document.querySelector(`.wizard-step[data-step="${currentStep}"]`).classList.remove('active');
-    document.querySelector(`.step-indicator[data-step="${currentStep}"]`).classList.add('completed');
-    currentStep += direction;
-    document.querySelector(`.wizard-step[data-step="${currentStep}"]`).classList.add('active');
-    document.querySelector(`.step-indicator[data-step="${currentStep}"]`).classList.add('active');
-    document.getElementById('btnPrev').style.visibility = currentStep === 1 ? 'hidden' : 'visible';
-    if (currentStep === totalSteps) { document.getElementById('btnNext').style.display = 'none'; document.getElementById('btnGenerate').style.display = 'inline-flex'; }
-    else { document.getElementById('btnNext').style.display = 'inline-flex'; document.getElementById('btnGenerate').style.display = 'none'; }
-}
-
-function validateStep(step) {
-    if (step === 1) return document.getElementById('jurisdiccion').value && document.getElementById('nivel').value;
-    if (step === 2) return document.getElementById('colegio').value && document.getElementById('materia').value && document.getElementById('curso').value;
-    if (step === 3) return document.getElementById('tema').value;
-    return true;
-}
-
-// =========================================
-// GENERAR PLANIFICACIÓN (con Cloud Function)
-// =========================================
-async function generatePlanWithAI(data) {
-    try { const generatePlan = httpsCallable(functions, 'generatePlan'); const result = await generatePlan(data); return result.data; }
-    catch (error) { console.error('Error Cloud Function:', error); return null; }
-}
-
-async function generatePlanning() {
-    if (!document.getElementById('tipoPlanificacion').value) { alert('Seleccioná el tipo de planificación'); return; }
-    document.getElementById('previewColegio').textContent = document.getElementById('colegio').value;
-    document.getElementById('previewJurisdiccion').textContent = document.getElementById('jurisdiccion').value;
-    document.getElementById('previewNivel').textContent = document.getElementById('nivel').value;
-    document.getElementById('previewAnio').textContent = document.getElementById('anio').value;
-    document.getElementById('previewMateria').textContent = document.getElementById('materia').value;
-    document.getElementById('previewCurso').textContent = document.getElementById('curso').value;
-    document.getElementById('previewCarga').textContent = document.getElementById('cargaHoraria').value || '-';
-    document.getElementById('previewTema').textContent = document.getElementById('tema').value;
-    document.getElementById('previewSection').style.display = 'block';
-    document.getElementById('loadingOverlay').classList.add('active');
-    const formData = { materia: document.getElementById('materia').value, nivel: document.getElementById('nivel').value, tema: document.getElementById('tema').value, jurisdiccion: document.getElementById('jurisdiccion').value, tipo: document.getElementById('tipoPlanificacion').value };
-    if (archivoProgramaSeleccionado) {
-        const reader = new FileReader();
-        reader.onload = async function() { formData.archivoBase64 = reader.result.split(',')[1]; formData.archivoMimeType = archivoProgramaSeleccionado.type; await processPlanning(formData); };
-        reader.readAsDataURL(archivoProgramaSeleccionado);
-    } else { await processPlanning(formData); }
-}
-
-async function processPlanning(formData) {
-    let planData = isUserLoggedIn ? await generatePlanWithAI(formData) : null;
-    document.getElementById('loadingOverlay').classList.remove('active');
-    if (planData) {
-        document.getElementById('previewFundamentacion').innerHTML = planData.fundamentacion;
-        document.getElementById('previewObjetivos').innerHTML = planData.objetivos;
-        document.getElementById('previewContenidos').innerHTML = planData.contenidos;
-        document.getElementById('previewEstrategias').innerHTML = planData.estrategias;
-        document.getElementById('previewEvaluacion').innerHTML = planData.evaluacion;
-    } else { await simulateAIContent(); }
-    const uid = localStorage.getItem('userUid');
-    if (uid) {
-        const docRef = await StorageManager.addPlanificacion(uid, { colegio: document.getElementById('colegio').value, jurisdiccion: document.getElementById('jurisdiccion').value, nivel: document.getElementById('nivel').value, materia: document.getElementById('materia').value, tema: document.getElementById('tema').value, tipo: document.getElementById('tipoPlanificacion').value });
-        ultimaPlanificacionId = docRef.id;
+exports.consolidatePlans = functions.https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Debe iniciar sesión.');
+    const { planIds } = data;
+    const uid = context.auth.uid;
+    const documentos = [];
+    for (const id of planIds) {
+        const doc = await db.collection('users').doc(uid).collection('planificaciones').doc(id).get();
+        if (doc.exists) documentos.push(doc.data());
     }
-    document.getElementById('previewSection').scrollIntoView({ behavior: 'smooth' });
-}
-
-async function simulateAIContent() {
-    const materia = document.getElementById('materia').value, nivel = document.getElementById('nivel').value, tema = document.getElementById('tema').value, jurisdiccion = document.getElementById('jurisdiccion').value;
-    document.getElementById('previewFundamentacion').innerHTML = `<p>La enseñanza de <strong>${tema}</strong> en <strong>${materia}</strong> es fundamental según el Diseño Curricular de ${jurisdiccion}. Esta planificación busca que el estudiante construya significados desde sus saberes previos, fomentando el pensamiento crítico.</p>`;
-    document.getElementById('previewObjetivos').innerHTML = `<ul><li>Comprender los conceptos fundamentales de ${tema}.</li><li>Aplicar procedimientos propios de ${materia}.</li><li>Desarrollar actitudes de responsabilidad y cooperación.</li></ul>`;
-    document.getElementById('previewContenidos').innerHTML = `<p><strong>Conceptuales:</strong> ${tema}, propiedades y clasificación.</p><p><strong>Procedimentales:</strong> Resolución de problemas, análisis de casos.</p><p><strong>Actitudinales:</strong> Valoración del trabajo intelectual.</p>`;
-    document.getElementById('previewEstrategias').innerHTML = `<ul><li><strong>ABP:</strong> Situaciones problemáticas contextualizadas.</li><li><strong>Trabajo Colaborativo:</strong> Producción grupal con roles.</li></ul>`;
-    document.getElementById('previewEvaluacion').innerHTML = `<p><strong>Criterios:</strong> Apropiación conceptual, aplicación de procedimientos, participación.</p><p><strong>Instrumentos:</strong> Observación, registros, pruebas escritas, rúbricas.</p>`;
-}
-
-// =========================================
-// COMPARTIR PLANIFICACIÓN
-// =========================================
-async function shareCurrentPlanification(method) {
-    if (!ultimaPlanificacionId) { alert('Primero generá una planificación.'); return; }
-    try {
-        const generateLink = httpsCallable(functions, 'generateShareLink');
-        const result = await generateLink({ planificacionId: ultimaPlanificacionId, method });
-        if (method === 'whatsapp') window.open(`https://wa.me/?text=${encodeURIComponent(result.data.shareText)}`, '_blank');
-        else if (method === 'email') window.location.href = `mailto:?subject=Planificación&body=${encodeURIComponent(result.data.shareText)}`;
-    } catch (error) { alert('Error al compartir.'); }
-}
+    if (documentos.length === 0) throw new functions.https.HttpsError('not-found', 'No se encontraron planificaciones.');
+    const consolidado = {
+        fundamentacion: documentos.map(d => d.fundamentacion || '').join('\n\n'),
+        objetivos: documentos.map(d => d.objetivos || '').join('\n'),
+        contenidos: documentos.map(d => d.contenidos || '').join('\n'),
+        estrategias: documentos.map(d => d.estrategias || '').join('\n'),
+        evaluacion: documentos.map(d => d.evaluacion || '').join('\n'),
+        fuenteIds: planIds,
+        tipo: 'Consolidado',
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
+    };
+    const docRef = await db.collection('users').doc(uid).collection('planificaciones').add(consolidado);
+    return { id: docRef.id, message: 'Planificación consolidada creada correctamente.' };
+});
 
 // =========================================
-// GOOGLE CALENDAR
+// 7. VALIDACIÓN DE COHERENCIA CURRICULAR
 // =========================================
-async function connectGoogleCalendar() {
-    const client = google.accounts.oauth2.initCodeClient({
-        client_id: GOOGLE_CLIENT_ID,
-        scope: 'https://www.googleapis.com/auth/calendar.events',
-        ux_mode: 'popup',
-        callback: async (response) => {
-            if (response.code) {
-                const exchangeToken = httpsCallable(functions, 'exchangeGoogleToken');
-                await exchangeToken({ code: response.code });
-                alert('✅ Google Calendar conectado correctamente.');
+exports.validateCurriculumCoherence = functions.https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Debe iniciar sesión.');
+    const { materia, contenidos } = data;
+    const materiaKey = materia.toLowerCase().replace(/ /g, '_').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const docRef = db.collection('contenidos_curriculares').doc(materiaKey);
+    const docSnap = await docRef.get();
+    if (!docSnap.exists) return { cumple: false, mensaje: 'No hay diseño curricular cargado para esta materia.' };
+    const curricular = docSnap.data().texto.toLowerCase();
+    const palabrasPlan = (contenidos || '').toLowerCase().split(/\s+/).filter(p => p.length > 4);
+    const faltantes = palabrasPlan.filter(p => !curricular.includes(p));
+    return {
+        cumple: faltantes.length < palabrasPlan.length * 0.3,
+        palabrasFaltantes: faltantes.slice(0, 10),
+        mensaje: faltantes.length < palabrasPlan.length * 0.3 ? 'La planificación es coherente con el diseño curricular.' : 'Se detectaron palabras que no aparecen en el diseño curricular oficial.'
+    };
+});
+
+// =========================================
+// 8. RECORDATORIOS INTERNOS (sin FCM)
+// =========================================
+exports.generateInternalReminders = functions.pubsub.schedule('every 6 hours').onRun(async (context) => {
+    const now = admin.firestore.Timestamp.now();
+    const threeDaysLater = new Date(now.toDate().getTime() + 3 * 24 * 60 * 60 * 1000);
+    const usersSnapshot = await db.collection('users').get();
+    for (const userDoc of usersSnapshot.docs) {
+        const uid = userDoc.id;
+        const eventsSnapshot = await db.collection('users').doc(uid).collection('events')
+            .where('imp', '==', true).get();
+        for (const eventDoc of eventsSnapshot.docs) {
+            const evt = eventDoc.data();
+            const eventDate = new Date(evt.year, evt.month - 1, evt.day);
+            if (eventDate.toDateString() === threeDaysLater.toDateString()) {
+                await db.collection('users').doc(uid).collection('notifications').add({
+                    title: 'Recordatorio',
+                    body: `Faltan 3 días para: ${evt.name}`,
+                    eventId: eventDoc.id,
+                    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                    read: false
+                });
             }
-        },
-    });
-    client.requestCode();
-}
-
-async function syncWithGoogleCalendar() {
-    if (!isPlanSufficient('maestro')) { alert('🔒 Requiere Plan Maestro o superior.'); return; }
-    const uid = localStorage.getItem('userUid'); if (!uid) return;
-    const events = Object.values(userEvents).flat();
-    let count = 0;
-    for (const event of events) {
-        if (!event.googleCalendarEventId) {
-            try {
-                const syncEvent = httpsCallable(functions, 'syncEventToGoogleCalendar');
-                await syncEvent({ eventId: event.id, action: 'create', eventData: { name: event.name, type: event.type, year: event.year, month: event.month, day: event.day } });
-                count++;
-            } catch (e) {}
         }
     }
-    alert(`✅ Se sincronizaron ${count} eventos con Google Calendar.`);
-}
-
-// =========================================
-// CALENDARIO
-// =========================================
-const monthNames = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
-let currentMonth = new Date().getMonth(), currentYear = new Date().getFullYear();
-let userEvents = {}, holidays = {}, holidayCache = {}, selectedEventColor = 'var(--event-exam)';
-
-async function fetchHolidays(year) {
-    if (holidayCache[year]) return holidayCache[year];
-    try { const r = await fetch(`https://date.nager.at/api/v3/PublicHolidays/${year}/AR`); const d = await r.json(); const m = {}; d.forEach(h => { const dt = new Date(h.date); m[`${dt.getDate()}-${dt.getMonth()+1}`] = h.localName; }); holidayCache[year] = m; return m; }
-    catch (e) { return {}; }
-}
-
-async function loadUserEvents() { const uid = localStorage.getItem('userUid'); if (!uid) return; userEvents = await StorageManager.loadEvents(uid); checkReminders(); }
-
-function checkReminders() {
-    if (!("Notification" in window) || Notification.permission !== "granted") return;
-    const today = new Date(); const reminderDate = new Date(today); reminderDate.setDate(today.getDate() + 3);
-    Object.values(userEvents).flat().forEach(evt => { if (!evt.imp) return; if (new Date(evt.year, evt.month-1, evt.day).toDateString() === reminderDate.toDateString()) new Notification("Recordatorio PlanificAR", { body: `Faltan 3 días para: ${evt.name}` }); });
-}
-
-// Modal
-let selectedDate = null;
-const eventModal = document.getElementById('eventModal');
-const modalTitle = document.getElementById('modalTitle');
-const modalEventType = document.getElementById('modalEventType');
-const modalEventName = document.getElementById('modalEventName');
-const modalEventImportant = document.getElementById('modalEventImportant');
-const modalEventRepeat = document.getElementById('modalEventRepeat');
-const modalRepeatCount = document.getElementById('modalRepeatCount');
-const repeatCountField = document.getElementById('repeatCountField');
-const saveEventBtn = document.getElementById('saveEventBtn');
-
-document.getElementById('colorPicker').addEventListener('click', (e) => {
-    if (e.target.classList.contains('color-option')) { document.querySelectorAll('.color-option').forEach(o => o.classList.remove('selected')); e.target.classList.add('selected'); selectedEventColor = e.target.dataset.color; }
 });
 
-modalEventRepeat.addEventListener('change', () => { repeatCountField.style.display = modalEventRepeat.value !== 'none' ? 'block' : 'none'; });
-
-function openEventModal(day, month, year) {
-    selectedDate = { day, month, year };
-    modalTitle.textContent = `Nuevo evento - ${day}/${month+1}/${year}`;
-    modalEventType.value = 'Evento'; modalEventName.value = ''; modalEventImportant.checked = false;
-    modalEventRepeat.value = 'none'; modalRepeatCount.value = 4; repeatCountField.style.display = 'none';
-    selectedEventColor = 'var(--event-exam)';
-    document.querySelectorAll('.color-option').forEach(o => o.classList.remove('selected'));
-    document.querySelector('.color-option[data-color="var(--event-exam)"]').classList.add('selected');
-    eventModal.classList.add('show');
-}
-
-function closeEventModal() { eventModal.classList.remove('show'); setTimeout(() => { selectedDate = null; }, 300); }
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && eventModal.classList.contains('show')) closeEventModal(); });
-eventModal.addEventListener('click', (e) => { if (e.target === eventModal) closeEventModal(); });
-
-saveEventBtn.addEventListener('click', async () => {
-    if (!selectedDate) return;
-    const uid = localStorage.getItem('userUid'); if (!uid) return;
-    const eventData = { day: selectedDate.day, month: selectedDate.month + 1, year: selectedDate.year, type: modalEventType.value, name: modalEventName.value || 'Sin título', imp: modalEventImportant.checked, color: selectedEventColor };
-    
-    if (modalEventRepeat.value !== 'none') {
-        try { const createRecurring = httpsCallable(functions, 'createRecurringEvent'); await createRecurring({ eventData, recurrence: { type: modalEventRepeat.value, count: parseInt(modalRepeatCount.value) } }); }
-        catch (error) { alert('Error al crear eventos recurrentes.'); }
-    } else {
-        try { await StorageManager.addEvent(uid, eventData); } catch (error) { alert('Error al guardar el evento.'); }
+// =========================================
+// 9. LIMPIEZA AUTOMÁTICA
+// =========================================
+exports.cleanOldData = functions.pubsub.schedule('0 3 * * 0').onRun(async (context) => {
+    const sixMonthsAgo = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000);
+    const usersSnapshot = await db.collection('users').get();
+    for (const userDoc of usersSnapshot.docs) {
+        const uid = userDoc.id;
+        const backupsSnapshot = await db.collection('users').doc(uid).collection('backups')
+            .where('backupDate', '<=', sixMonthsAgo).get();
+        for (const backupDoc of backupsSnapshot.docs) {
+            await backupDoc.ref.delete();
+        }
+        const notifSnapshot = await db.collection('users').doc(uid).collection('notifications')
+            .where('createdAt', '<=', sixMonthsAgo).get();
+        for (const notifDoc of notifSnapshot.docs) {
+            await notifDoc.ref.delete();
+        }
     }
-    closeEventModal(); await loadUserEvents(); await renderCalendar();
-    if (modalEventImportant.checked && "Notification" in window && Notification.permission === "default") Notification.requestPermission();
 });
 
-async function renderCalendar() {
-    const grid = document.getElementById('calendarGrid'); if (!grid) return;
-    let html = '';
-    ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'].forEach(d => html += `<div class="day-name">${d}</div>`);
-    document.getElementById('displayMonthName').textContent = monthNames[currentMonth];
-    document.getElementById('displayYear').textContent = currentYear;
-    holidays = await fetchHolidays(currentYear);
-    const firstDay = new Date(currentYear, currentMonth, 1).getDay(), daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
-    let startDay = firstDay === 0 ? 6 : firstDay - 1;
-    for (let i = 0; i < startDay; i++) html += '<div class="calendar-day empty"></div>';
-    const today = new Date();
-    for (let day = 1; day <= daysInMonth; day++) {
-        const dayOfWeek = new Date(currentYear, currentMonth, day).getDay(), dateKey = `${day}-${currentMonth+1}-${currentYear}`, holidayKey = `${day}-${currentMonth+1}`;
-        let content = `<div style="font-weight:600; margin-bottom:2px;">${day}</div>`;
-        if (userEvents[dateKey]) userEvents[dateKey].forEach(evt => content += `<div class="event-tag-cell" draggable="true" data-id="${evt.id}" style="background: ${evt.color || 'var(--event-exam)'}">${evt.name}</div>`);
-        let classes = 'calendar-day';
-        if (!userEvents[dateKey]) classes += ' skeleton';
-        if (today.getDate() === day && today.getMonth() === currentMonth && today.getFullYear() === currentYear) classes += ' today';
-        if (dayOfWeek === 0 || dayOfWeek === 6) classes += ' weekend';
-        if (holidays[holidayKey]) { classes += ' holiday'; content += '<div style="font-size:0.65rem; color:#6A5ACD;">🇷 Feriado</div>'; }
-        html += `<div class="${classes}" data-date="${dateKey}">${content}</div>`;
-    }
-    grid.innerHTML = html;
-    document.querySelectorAll('.calendar-day.skeleton').forEach(c => c.classList.remove('skeleton'));
-    document.querySelectorAll('.calendar-day:not(.empty)').forEach(cell => {
-        cell.addEventListener('click', (e) => { if (e.target.classList.contains('event-tag-cell')) return; const [d, m, y] = cell.dataset.date.split('-').map(Number); openEventModal(d, m-1, y); });
-        cell.addEventListener('dragover', e => e.preventDefault());
-        cell.addEventListener('drop', async (e) => {
-            e.preventDefault(); const eventId = e.dataTransfer.getData('text/plain'); if (!eventId) return;
-            const uid = localStorage.getItem('userUid'); const oldDate = e.dataTransfer.getData('date').split('-'), newDate = cell.dataset.date.split('-');
-            if (oldDate[0] === newDate[0] && oldDate[1] === newDate[1] && oldDate[2] === newDate[2]) return;
-            try { await StorageManager.updateEvent(uid, eventId, { day: parseInt(newDate[0]), month: parseInt(newDate[1]), year: parseInt(newDate[2]) }); await loadUserEvents(); await renderCalendar(); }
-            catch (error) { alert('Error de conexión.'); await loadUserEvents(); await renderCalendar(); }
+// =========================================
+// 10. EXPORTACIÓN A PDF DESDE EL BACKEND
+// =========================================
+exports.generatePlanPDF = functions.https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Debe iniciar sesión.');
+    const { planificacionId } = data;
+    const uid = context.auth.uid;
+    const docSnap = await db.collection('users').doc(uid).collection('planificaciones').doc(planificacionId).get();
+    if (!docSnap.exists) throw new functions.https.HttpsError('not-found', 'Planificación no encontrada.');
+    const plan = docSnap.data();
+    const PDFDocument = require('pdfkit');
+    const doc = new PDFDocument();
+    const chunks = [];
+    doc.on('data', chunk => chunks.push(chunk));
+    doc.on('end', async () => {
+        const base64 = Buffer.concat(chunks).toString('base64');
+        await db.collection('users').doc(uid).collection('exports').add({
+            planificacionId,
+            pdfBase64: base64,
+            createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
     });
-    document.querySelectorAll('.event-tag-cell').forEach(tag => { tag.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/plain', tag.dataset.id); e.dataTransfer.setData('date', tag.closest('.calendar-day').dataset.date); }); });
-    updateWeeklyAgenda(); updateSearchResults();
-}
-
-// Buscador y agenda (funciones ya existentes, se mantienen igual)
-const searchInput = document.getElementById('searchEvents'), searchResults = document.getElementById('searchResults');
-searchInput.addEventListener('input', updateSearchResults);
-function updateSearchResults() {
-    const query = searchInput.value.toLowerCase();
-    if (!query) { searchResults.style.display = 'none'; return; }
-    const results = [];
-    Object.entries(userEvents).forEach(([dateKey, events]) => events.forEach(evt => { if (evt.name.toLowerCase().includes(query) || evt.type.toLowerCase().includes(query)) results.push({ ...evt, date: dateKey }); }));
-    searchResults.innerHTML = results.length ? results.map(r => `<div onclick="goToDate('${r.date}')">📅 ${r.date} - ${r.name} (${r.type})</div>`).join('') : '<div>No se encontraron eventos.</div>';
-    searchResults.style.display = 'block';
-}
-window.goToDate = function(dateKey) { const [day, month, year] = dateKey.split('-').map(Number); currentMonth = month - 1; currentYear = year; loadUserEvents().then(() => renderCalendar()); document.querySelector('#calendario').scrollIntoView({ behavior: 'smooth' }); };
-function updateWeeklyAgenda() {
-    const list = document.getElementById('weeklyList'); if (!list) return;
-    const today = new Date(), startOfWeek = new Date(today); startOfWeek.setDate(today.getDate() - today.getDay() + 1);
-    const endOfWeek = new Date(startOfWeek); endOfWeek.setDate(startOfWeek.getDate() + 6);
-    const weekEvents = [];
-    Object.entries(userEvents).forEach(([dateKey, events]) => { const [d, m, y] = dateKey.split('-').map(Number); const eventDate = new Date(y, m-1, d); if (eventDate >= startOfWeek && eventDate <= endOfWeek) events.forEach(evt => weekEvents.push({ date: dateKey, ...evt })); });
-    weekEvents.sort((a,b) => new Date(a.date.split('-')[2], a.date.split('-')[1]-1, a.date.split('-')[0]) - new Date(b.date.split('-')[2], b.date.split('-')[1]-1, b.date.split('-')[0]));
-    list.innerHTML = weekEvents.length ? weekEvents.map(e => `<li><span>📅 ${e.date}</span> <span style="background:${e.color||'var(--event-exam)'};padding:0 6px;border-radius:4px;">${e.name}</span></li>`).join('') : '<li>No hay eventos esta semana.</li>';
-}
-document.getElementById('prevMonth').addEventListener('click', async () => { currentMonth--; if (currentMonth < 0) { currentMonth = 11; currentYear--; } await loadUserEvents(); await renderCalendar(); });
-document.getElementById('nextMonth').addEventListener('click', async () => { currentMonth++; if (currentMonth > 11) { currentMonth = 0; currentYear++; } await loadUserEvents(); await renderCalendar(); });
-const monthSelector = document.getElementById('monthSelector');
-monthNames.forEach((m, i) => { const btn = document.createElement('button'); btn.className = 'month-btn' + (i === currentMonth ? ' active' : ''); btn.textContent = m.substring(0,3); btn.onclick = async () => { currentMonth = i; await loadUserEvents(); await renderCalendar(); }; monthSelector.appendChild(btn); });
-
-// =========================================
-// EXPORTACIONES
-// =========================================
-document.getElementById('exportExcelBtn').addEventListener('click', () => {
-    if (!isPlanSufficient('maestro')) { alert('🔒 Requiere Plan Maestro.'); return; }
-    const eventsArray = [];
-    Object.entries(userEvents).forEach(([dateKey, events]) => events.forEach(evt => eventsArray.push({ 'Fecha': dateKey, 'Tipo': evt.type, 'Nombre': evt.name, 'Importante': evt.imp ? 'Sí' : 'No' })));
-    if (eventsArray.length === 0) { alert('No hay eventos.'); return; }
-    const ws = XLSX.utils.json_to_sheet(eventsArray), wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Eventos"); XLSX.writeFile(wb, `planificar_eventos_${currentMonth+1}_${currentYear}.xlsx`);
+    doc.fontSize(16).text(`Planificación de ${plan.materia} - ${plan.tema}`, { align: 'center' });
+    doc.moveDown();
+    doc.fontSize(12).text(`Fundamentación: ${plan.fundamentacion || ''}`);
+    doc.text(`Objetivos: ${plan.objetivos || ''}`);
+    doc.text(`Contenidos: ${plan.contenidos || ''}`);
+    doc.text(`Estrategias: ${plan.estrategias || ''}`);
+    doc.text(`Evaluación: ${plan.evaluacion || ''}`);
+    doc.end();
+    return { message: 'PDF generado y guardado en exports.' };
 });
-function exportCalendarToPDF() {
-    if (!isPlanSufficient('maestro')) { alert('🔒 Requiere Plan Maestro.'); return; }
-    const spinner = document.getElementById('pdfSpinner'); if (spinner) spinner.style.display = 'inline';
-    setTimeout(() => {
-        const { jsPDF } = window.jspdf; const doc = new jsPDF(); doc.setFontSize(16); doc.text(`Calendario - ${monthNames[currentMonth]} ${currentYear}`, 14, 20);
-        let y = 30;
-        const events = Object.entries(userEvents).sort(([a], [b]) => { const [da, ma, ya] = a.split('-').map(Number), [db, mb, yb] = b.split('-').map(Number); return new Date(ya, ma-1, da) - new Date(yb, mb-1, db); });
-        if (events.length === 0) doc.text('No hay eventos este mes.', 14, y);
-        else events.forEach(([dateKey, evts]) => evts.forEach(evt => { if (y > 270) { doc.addPage(); y = 20; } doc.setFontSize(11); doc.text(`${dateKey}: ${evt.name} (${evt.type})`, 14, y); y += 7; }));
-        doc.save(`planificar_${currentMonth+1}_${currentYear}.pdf`); if (spinner) spinner.style.display = 'none';
-    }, 100);
-}
 
 // =========================================
-// ESTADÍSTICAS
+// 11. ANÁLISIS DE SENTIMIENTO
 // =========================================
-async function loadUserStats() {
-    try { const getStats = httpsCallable(functions, 'getUserStats'); const result = await getStats(); return result.data; }
-    catch (error) { return null; }
-}
-if (document.getElementById('statsContainer')) {
-    loadUserStats().then(stats => {
-        if (stats) document.getElementById('statsContainer').innerHTML = `<p>📊 <strong>Planificaciones:</strong> ${stats.totalPlans}</p><p>📅 <strong>Eventos:</strong> ${stats.totalEvents}</p><p>🏆 <strong>Materias principales:</strong> ${stats.topMaterias.map(m => m.nombre).join(', ') || 'Ninguna aún'}</p>`;
-        else document.getElementById('statsContainer').innerHTML = '<p>No se pudieron cargar las estadísticas.</p>';
+exports.analyzeSentiment = functions.https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Debe iniciar sesión.');
+    const { texto } = data;
+    const positivas = ['bien', 'excelente', 'bueno', 'motivador', 'positivo', 'creativo', 'innovador', 'colaborativo'];
+    const negativas = ['mal', 'deficiente', 'problema', 'dificultad', 'repetitivo', 'aburrido', 'forzado'];
+    let score = 0;
+    const palabras = texto.toLowerCase().split(/\s+/);
+    palabras.forEach(p => { if (positivas.includes(p)) score++; if (negativas.includes(p)) score--; });
+    return { score, sentimiento: score > 0 ? 'positivo' : score < 0 ? 'negativo' : 'neutro' };
+});
+
+// =========================================
+// 12. DUPLICACIÓN INTELIGENTE
+// =========================================
+exports.duplicatePlanForYear = functions.https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Debe iniciar sesión.');
+    const { planificacionId, newYear } = data;
+    const uid = context.auth.uid;
+    const docSnap = await db.collection('users').doc(uid).collection('planificaciones').doc(planificacionId).get();
+    if (!docSnap.exists) throw new functions.https.HttpsError('not-found', 'Planificación no encontrada.');
+    const original = docSnap.data();
+    const duplicated = { ...original, year: newYear, duplicatedFrom: planificacionId, createdAt: admin.firestore.FieldValue.serverTimestamp() };
+    const newDoc = await db.collection('users').doc(uid).collection('planificaciones').add(duplicated);
+    return { id: newDoc.id, message: 'Planificación duplicada para el año ' + newYear };
+});
+
+// =========================================
+// 13. ESTADÍSTICAS AVANZADAS
+// =========================================
+exports.getAdvancedStats = functions.https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Debe iniciar sesión.');
+    const uid = context.auth.uid;
+    const plansSnapshot = await db.collection('users').doc(uid).collection('planificaciones').get();
+    const porMes = {};
+    const porMateria = {};
+    let totalEdiciones = 0;
+    for (const planDoc of plansSnapshot.docs) {
+        const plan = planDoc.data();
+        const mes = plan.createdAt?.toDate ? plan.createdAt.toDate().getMonth() : new Date().getMonth();
+        porMes[mes] = (porMes[mes] || 0) + 1;
+        porMateria[plan.materia] = (porMateria[plan.materia] || 0) + 1;
+        const versionesSnapshot = await db.collection('users').doc(uid)
+            .collection('planificaciones').doc(planDoc.id).collection('versions').get();
+        totalEdiciones += versionesSnapshot.size;
+    }
+    return { porMes, porMateria, totalPlanificaciones: plansSnapshot.size, totalEdiciones };
+});
+
+// =========================================
+// 14. SISTEMA DE ETIQUETAS
+// =========================================
+exports.addTagToPlan = functions.https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Debe iniciar sesión.');
+    const { planificacionId, tag } = data;
+    const uid = context.auth.uid;
+    await db.collection('users').doc(uid).collection('planificaciones').doc(planificacionId).update({
+        tags: admin.firestore.FieldValue.arrayUnion(tag)
     });
-}
-
-// =========================================
-// ROUTER Y MENÚ
-// =========================================
-window.addEventListener('hashchange', () => {
-    ['generador', 'calendario', 'recursos', 'planes'].forEach(s => { const el = document.getElementById(s); if (el) el.style.display = (s === (window.location.hash.replace('#', '') || 'generador')) ? '' : 'none'; });
-    document.querySelectorAll('.menu-link').forEach(link => link.classList.toggle('active', link.getAttribute('href') === `#${window.location.hash}` || (!window.location.hash && link.getAttribute('href') === '#generador')));
+    return { success: true };
 });
-window.addEventListener('load', () => window.dispatchEvent(new HashChangeEvent('hashchange')));
-document.getElementById('hamburgerBtn').addEventListener('click', () => { document.getElementById('menuLinks').classList.toggle('show'); document.getElementById('menuOverlay').classList.toggle('show'); });
-document.getElementById('menuOverlay').addEventListener('click', () => { document.getElementById('menuLinks').classList.remove('show'); document.getElementById('menuOverlay').classList.remove('show'); });
-document.querySelectorAll('.menu-link').forEach(link => link.addEventListener('click', () => { document.getElementById('menuLinks').classList.remove('show'); document.getElementById('menuOverlay').classList.remove('show'); }));
+
+exports.removeTagFromPlan = functions.https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Debe iniciar sesión.');
+    const { planificacionId, tag } = data;
+    const uid = context.auth.uid;
+    await db.collection('users').doc(uid).collection('planificaciones').doc(planificacionId).update({
+        tags: admin.firestore.FieldValue.arrayRemove(tag)
+    });
+    return { success: true };
+});
+
+exports.getPlansByTag = functions.https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Debe iniciar sesión.');
+    const { tag } = data;
+    const uid = context.auth.uid;
+    const snapshot = await db.collection('users').doc(uid).collection('planificaciones')
+        .where('tags', 'array-contains', tag).get();
+    const resultados = [];
+    snapshot.forEach(doc => resultados.push({ id: doc.id, ...doc.data() }));
+    return resultados;
+});
 
 // =========================================
-// EXPONER AL SCOPE GLOBAL
+// 15. COPIA DE SEGURIDAD BAJO DEMANDA
 // =========================================
-window.setPlan = setPlan; window.contactWhatsApp = contactWhatsApp;
-window.toggleProgramaPropio = toggleProgramaPropio; window.changeStep = changeStep;
-window.generatePlanning = generatePlanning; window.closeEventModal = closeEventModal;
-window.handleRestrictedClick = handleRestrictedClick; window.exportCalendarToPDF = exportCalendarToPDF;
-window.toggleAdjuntarArchivo = toggleAdjuntarArchivo; window.handleFileSelect = handleFileSelect;
-window.shareCurrentPlanification = shareCurrentPlanification;
-window.syncWithGoogleCalendar = syncWithGoogleCalendar;
-window.connectGoogleCalendar = connectGoogleCalendar;
+exports.manualBackup = functions.https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Debe iniciar sesión.');
+    const uid = context.auth.uid;
+    const eventsSnapshot = await db.collection('users').doc(uid).collection('events').get();
+    const plansSnapshot = await db.collection('users').doc(uid).collection('planificaciones').get();
+    const backup = {
+        events: eventsSnapshot.docs.map(d => ({ id: d.id, ...d.data() })),
+        planificaciones: plansSnapshot.docs.map(d => ({ id: d.id, ...d.data() })),
+        backupDate: admin.firestore.FieldValue.serverTimestamp(),
+        tipo: 'manual'
+    };
+    const docRef = await db.collection('users').doc(uid).collection('backups').add(backup);
+    return { id: docRef.id, message: 'Backup manual creado correctamente.' };
+});
 
 // =========================================
-// INICIALIZACIÓN
+// FUNCIONES ANTERIORES (se mantienen)
 // =========================================
-function initApp() {
-    const themeToggle = document.getElementById('themeToggle'), htmlElement = document.documentElement;
-    const savedTheme = localStorage.getItem('theme'), prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    if (savedTheme === 'dark' || (!savedTheme && prefersDark)) { htmlElement.setAttribute('data-theme', 'dark'); themeToggle.textContent = '☀️'; }
-    themeToggle.addEventListener('click', () => { const ct = htmlElement.getAttribute('data-theme'), nt = ct === 'dark' ? 'light' : 'dark'; htmlElement.setAttribute('data-theme', nt); localStorage.setItem('theme', nt); themeToggle.textContent = nt === 'dark' ? '☀️' : '🌙'; });
-    updatePlanUI(); updateGenerateButtonState();
-    loadUserEvents().then(() => renderCalendar()); toggleProgramaPropio();
+async function extractTextFromBase64(base64Data, mimeType) {
+    try {
+        const buffer = Buffer.from(base64Data, 'base64');
+        if (mimeType === 'application/pdf') {
+            const data = await pdf(buffer);
+            return data.text;
+        } else if (mimeType === 'application/msword' || mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+            const result = await mammoth.extractRawText({ buffer });
+            return result.value;
+        }
+        return '';
+    } catch (error) { return ''; }
 }
-initAuth(); initApp();
+
+async function obtenerContenidoCurricular(materia) {
+    if (!materia) return '';
+    const materiaKey = materia.toLowerCase().replace(/ /g, '_').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const docSnap = await db.collection('contenidos_curriculares').doc(materiaKey).get();
+    return docSnap.exists ? docSnap.data().texto : '';
+}
+
+function buscarFragmentosRelevantes(texto, tema, max = 5) {
+    if (!texto || !tema) return '';
+    const palabras = tema.toLowerCase().split(' ').filter(p => p.length > 3);
+    const parrafos = texto.split(/\n\s*\n/).filter(p => p.trim().length > 50);
+    const puntuados = parrafos.map(p => {
+        let score = 0;
+        palabras.forEach(w => { const regex = new RegExp(w, 'g'); score += (p.match(regex) || []).length; });
+        return { texto: p.trim(), score };
+    });
+    puntuados.sort((a, b) => b.score - a.score);
+    return puntuados.slice(0, max).map(p => p.texto.substring(0, 600)).join('\n\n');
+}
+
+function generarPlanificacionProfesional(datos, textoArchivo, contenidoCurricular) {
+    const { materia, nivel, tema, jurisdiccion, tipo } = datos;
+    let fragmentos = '';
+    if (textoArchivo) fragmentos = buscarFragmentosRelevantes(textoArchivo, tema);
+    if (!fragmentos && contenidoCurricular) fragmentos = buscarFragmentosRelevantes(contenidoCurricular, tema);
+    return {
+        fundamentacion: `<p>La enseñanza de <strong>${tema}</strong> en <strong>${materia}</strong> es fundamental según el Diseño Curricular de ${jurisdiccion}. ${fragmentos ? '<p>"' + fragmentos.substring(0, 500) + '"</p>' : ''}</p>`,
+        objetivos: `<ul><li>Comprender conceptos de ${tema}.</li><li>Aplicar procedimientos de ${materia}.</li><li>Desarrollar actitudes de cooperación.</li></ul>`,
+        contenidos: `<p><strong>Conceptuales:</strong> ${tema}.</p><p><strong>Procedimentales:</strong> Resolución de problemas.</p><p><strong>Actitudinales:</strong> Valoración del trabajo.</p>`,
+        estrategias: `<ul><li>ABP</li><li>Trabajo colaborativo</li><li>Exposición dialogada</li></ul>`,
+        evaluacion: `<p>Criterios: conceptual, procedimental, actitudinal.</p><p>Instrumentos: observación, pruebas, rúbricas.</p>`
+    };
+}
+
+exports.generatePlan = functions.https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Debe iniciar sesión.');
+    const { materia, nivel, tema, jurisdiccion, tipo, archivoBase64, archivoMimeType } = data;
+    if (!materia || !nivel || !tema) throw new functions.https.HttpsError('invalid-argument', 'Faltan datos.');
+    let textoArchivo = '';
+    if (archivoBase64 && archivoMimeType) textoArchivo = await extractTextFromBase64(archivoBase64, archivoMimeType);
+    const contenido = await obtenerContenidoCurricular(materia);
+    return generarPlanificacionProfesional({ materia, nivel, tema, jurisdiccion, tipo }, textoArchivo, contenido);
+});
+
+exports.uploadContenidoCurricular = functions.https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Debe iniciar sesión.');
+    const { materia, texto } = data;
+    if (!materia || !texto) throw new functions.https.HttpsError('invalid-argument', 'Faltan datos.');
+    const key = materia.toLowerCase().replace(/ /g, '_').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    await db.collection('contenidos_curriculares').doc(key).set({ materia, texto, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+    return { success: true };
+});
+
+exports.generateRubric = functions.https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Debe iniciar sesión.');
+    const { materia, tema, criterios } = data;
+    return {
+        criterios: criterios.map(c => ({
+            nombre: c,
+            niveles: ['Excelente', 'Muy Bueno', 'Bueno', 'Regular'].map((n, i) => ({ nivel: n, puntaje: 10 - i * 2, descripcion: `${n} en ${c}` }))
+        }))
+    };
+});
+
+exports.generateShareLink = functions.https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Debe iniciar sesión.');
+    const { planificacionId, method } = data;
+    const uid = context.auth.uid;
+    const doc = await db.collection('users').doc(uid).collection('planificaciones').doc(planificacionId).get();
+    if (!doc.exists) throw new functions.https.HttpsError('not-found', 'No encontrada.');
+    const p = doc.data();
+    return { shareText: method === 'whatsapp' ? `*${p.materia} - ${p.tema}*\n${p.colegio}\nGenerada con PlanificAR` : `Planificación de ${p.materia} - ${p.tema}` };
+});
+
+exports.getUserStats = functions.https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Debe iniciar sesión.');
+    const uid = context.auth.uid;
+    const plans = await db.collection('users').doc(uid).collection('planificaciones').get();
+    const events = await db.collection('users').doc(uid).collection('events').get();
+    const materias = {};
+    plans.forEach(d => { const m = d.data().materia; materias[m] = (materias[m] || 0) + 1; });
+    return { totalPlans: plans.size, totalEvents: events.size, topMaterias: Object.entries(materias).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([n, c]) => ({ nombre: n, count: c })) };
+});
+
+exports.syncEventToGoogleCalendar = functions.https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Debe iniciar sesión.');
+    return { success: true, message: 'Sincronización simulada (requiere OAuth configurado).' };
+});
+
+exports.createRecurringEvent = functions.https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Debe iniciar sesión.');
+    const { eventData, recurrence } = data;
+    const uid = context.auth.uid;
+    const created = [];
+    const base = new Date(eventData.year, eventData.month - 1, eventData.day);
+    for (let i = 0; i < recurrence.count; i++) {
+        const d = new Date(base);
+        if (recurrence.type === 'weekly') d.setDate(base.getDate() + i * 7);
+        else if (recurrence.type === 'monthly') d.setMonth(base.getMonth() + i);
+        else d.setFullYear(base.getFullYear() + i);
+        const ref = await db.collection('users').doc(uid).collection('events').add({
+            day: d.getDate(), month: d.getMonth() + 1, year: d.getFullYear(),
+            type: eventData.type, name: eventData.name, imp: eventData.imp, color: eventData.color,
+            createdAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+        created.push({ id: ref.id });
+    }
+    return { success: true, events: created };
+});
+
+exports.getResourceLibrary = functions.https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Debe iniciar sesión.');
+    const snapshot = await db.collection('recursos').get();
+    return snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+});
+
+exports.uploadResource = functions.https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Debe iniciar sesión.');
+    const ref = await db.collection('recursos').add({ ...data, uploadedBy: context.auth.uid, createdAt: admin.firestore.FieldValue.serverTimestamp() });
+    return { id: ref.id };
+});
+
+exports.createWeeklyBackup = functions.pubsub.schedule('0 0 * * 0').onRun(async (context) => {
+    const users = await db.collection('users').get();
+    for (const u of users.docs) {
+        const events = await db.collection('users').doc(u.id).collection('events').get();
+        const plans = await db.collection('users').doc(u.id).collection('planificaciones').get();
+        await db.collection('users').doc(u.id).collection('backups').add({
+            events: events.docs.map(d => d.data()),
+            planificaciones: plans.docs.map(d => d.data()),
+            backupDate: admin.firestore.FieldValue.serverTimestamp()
+        });
+    }
+});
+
+exports.getWeeklyProductivity = functions.https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Debe iniciar sesión.');
+    const uid = context.auth.uid;
+    const weekAgo = new Date(Date.now() - 7 * 86400000);
+    const plans = await db.collection('users').doc(uid).collection('planificaciones').where('createdAt', '>=', weekAgo).get();
+    const events = await db.collection('users').doc(uid).collection('events').where('createdAt', '>=', weekAgo).get();
+    return { plansThisWeek: plans.size, eventsThisWeek: events.size };
+});
+
+exports.generateYearBackup = functions.https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Debe iniciar sesión.');
+    const uid = context.auth.uid;
+    const year = data.year || new Date().getFullYear();
+    const plans = await db.collection('users').doc(uid).collection('planificaciones').where('year', '==', year).get();
+    return { year, plans: plans.docs.map(d => ({ id: d.id, ...d.data() })) };
+});
