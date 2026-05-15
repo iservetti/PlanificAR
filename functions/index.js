@@ -1,8 +1,3 @@
-const functions = require('firebase-functions');
-const admin = require('firebase-admin');
-const pdf = require('pdf-parse');
-const mammoth = require('mammoth');
-
 admin.initializeApp();
 const db = admin.firestore();
 
