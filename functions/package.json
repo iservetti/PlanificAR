@@ -1,0 +1,15 @@
+{
+  "name": "planificar-arg-functions",
+  "version": "1.0.0",
+  "description": "Cloud Functions para PlanificAR",
+  "main": "index.js",
+  "dependencies": {
+    "firebase-admin": "^11.11.0",
+    "firebase-functions": "^4.5.0",
+    "pdf-parse": "^1.1.1",
+    "mammoth": "^1.6.0"
+  },
+  "engines": {
+    "node": "18"
+  }
+}

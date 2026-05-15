@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PlanificAR 🇦🇷</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🇦🇷</text></svg>">
+    <link rel="stylesheet" href="style.css">
+    <!-- SheetJS para exportación Excel -->
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <!-- jsPDF para exportación PDF -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+</head>
+<body>
+    <!-- LANDING PAGE -->
+    <div id="landingPage" class="landing-page">
+        <h1>PlanificAR 🇦🇷</h1>
+        <p>Planificaciones inteligentes, calendario y recursos para docentes argentinos.</p>
+        <button class="auth-btn" id="landingLoginBtn" style="font-size: 1.2rem; padding: 1rem 2.5rem;">
+            <span style="font-size:1.5rem;">G</span> Iniciar sesión con Google
+        </button>
+    </div>
+
+    <!-- APLICACIÓN PRINCIPAL -->
+    <div id="appContent" style="display: none;">
+        <nav class="highlighted-menu">
+            <button class="hamburger-btn" id="hamburgerBtn" aria-label="Abrir menú de navegación">
+                <span></span><span></span><span></span>
+            </button>
+            <div class="menu-logo">PlanificAR 🇦</div>
+            <div class="menu-links" id="menuLinks">
+                <a href="#generador" class="menu-link active">Generar</a>
+                <a href="#calendario" class="menu-link">Calendario</a>
+                <a href="#recursos" class="menu-link">Recursos</a>
+                <a href="#planes" class="menu-link">Planes</a>
+            </div>
+            <div style="display:flex; align-items:center; gap: 1rem;">
+                <button class="theme-toggle" id="themeToggle" aria-label="Cambiar tema claro/oscuro"></button>
+                <button class="auth-btn" id="appLogoutBtn">Salir</button>
+            </div>
+        </nav>
+
+        <div class="menu-overlay" id="menuOverlay"></div>
+
+        <div class="container">
+            <div id="trialBanner" class="trial-banner" style="display: none;"></div>
+            
+            <header class="hero" id="hero">
+                <h1>PlanificAR: Tu tiempo vale.</h1>
+                <p>Planificaciones + calendario + recursos. Todo en uno.</p>
+                <div class="plan-options" id="headerPlanBadges">
+                    <div class="plan-badge-new" data-plan="inicial"><span>🏫</span><div><div style="font-weight:700;">Plan Inicial</div><small>Básico y gratuito</small></div></div>
+                    <div class="plan-badge-new" data-plan="maestro"><span>🎓</span><div><div style="font-weight:700;">Plan Maestro</div><small>$3.999/mes</small></div></div>
+                    <div class="plan-badge-new profesor" data-plan="profesor"><span>🚀</span><div><div style="font-weight:700;">Plan Profesor</div><small>$5.999/mes</small></div></div>
+                </div>
+            </header>
+
+            <!-- WIZARD DE GENERACIÓN -->
+            <section id="generador" class="wizard-container">
+                <div class="wizard-header"><h2><span>🛠️</span> Generar Planificación Profesional</h2><p>Te guiamos paso a paso para crear tu planificación perfecta</p></div>
+                <div class="progress-indicator">
+                    <div class="step-indicator active" data-step="1"><div class="step-number">1</div><span class="step-label">Ubicación</span></div>
+                    <div class="step-connector"></div>
+                    <div class="step-indicator" data-step="2"><div class="step-number">2</div><span class="step-label">Institución</span></div>
+                    <div class="step-connector"></div>
+                    <div class="step-indicator" data-step="3"><div class="step-number">3</div><span class="step-label">Contenidos</span></div>
+                    <div class="step-connector"></div>
+                    <div class="step-indicator" data-step="4"><div class="step-number">4</div><span class="step-label">Alcance</span></div>
+                </div>
+                <div class="wizard-step active" data-step="1">
+                    <div class="step-title">📍 ¿Dónde vas a enseñar?</div>
+                    <div class="step-description">Configuramos las reglas curriculares según tu provincia y nivel educativo</div>
+                    <div class="form-grid">
+                        <div class="input-group"><label>Jurisdicción *</label><select id="jurisdiccion" required><option value="">Seleccionar...</option><option value="CABA">CABA</option><option value="Buenos Aires">Provincia de Buenos Aires</option><option value="Córdoba">Córdoba</option><option value="Santa Fe">Santa Fe</option><option value="Mendoza">Mendoza</option><option value="Tucumán">Tucumán</option><option value="Salta">Salta</option><option value="Corrientes">Corrientes</option><option value="Entre Ríos">Entre Ríos</option><option value="Chaco">Chaco</option><option value="Misiones">Misiones</option><option value="Otra">Otra provincia</option></select></div>
+                        <div class="input-group"><label>Nivel Educativo *</label><select id="nivel" required onchange="updateCicloOptions()"><option value="">Seleccionar...</option><option value="Inicial">Inicial</option><option value="Primario">Primario</option><option value="Secundario">Secundario</option><option value="Terciario">Terciario</option></select></div>
+                        <div class="input-group" id="cicloGroup" style="display: none;"><label>Ciclo *</label><select id="ciclo" onchange="updateAnioOptions()"><option value="">Primero seleccioná el nivel</option></select></div>
+                        <div class="input-group" id="anioGroup" style="display: none;"><label>Año/Grado *</label><select id="anio"><option value="">Primero seleccioná el ciclo</option></select></div>
+                    </div>
+                </div>
+                <div class="wizard-step" data-step="2">
+                    <div class="step-title">🏫 Datos de la Institución</div>
+                    <div class="step-description">Estos datos aparecerán en el encabezado de tu planificación</div>
+                    <div class="form-grid">
+                        <div class="input-group" style="grid-column: 1 / -1;"><label>Nombre del Colegio *</label><input type="text" id="colegio" placeholder="Ej: Escuela Normal Superior N° 1"></div>
+                        <div class="input-group"><label>Materia / Área *</label><select id="materia"><option value="">Seleccionar...</option><option value="Matemática">Matemática</option><option value="Lengua">Lengua</option><option value="Ciencias Naturales">Ciencias Naturales</option><option value="Ciencias Sociales">Ciencias Sociales</option><option value="Inglés">Inglés</option><option value="Educación Artística">Educación Artística</option><option value="Educación Física">Educación Física</option><option value="Tecnología">Tecnología</option><option value="Otra">Otra</option></select></div>
+                        <div class="input-group"><label>Curso y División *</label><input type="text" id="curso" placeholder="Ej: 4° B"></div>
+                        <div class="input-group"><label>Carga Horaria Semanal</label><input type="number" id="cargaHoraria" placeholder="Ej: 4" min="1" max="20"><small>Cantidad de horas/módulos por semana</small></div>
+                        <div class="input-group" style="grid-column: 1 / -1;"><label>Email (opcional)</label><input type="email" id="email" placeholder="docente@ejemplo.com"></div>
+                    </div>
+                </div>
+                <!-- STEP 3 MEJORADO CON ADJUNTAR ARCHIVO -->
+                <div class="wizard-step" data-step="3">
+                    <div class="step-title">📚 ¿Qué vas a enseñar?</div>
+                    <div class="step-description">Definimos los temas y contenidos de tu planificación</div>
+                    <div class="form-grid">
+                        <div class="input-group" style="grid-column: 1 / -1;">
+                            <label>Tema / Unidad *</label>
+                            <input type="text" id="tema" placeholder="Ej: Fracciones decimales, Revolución de Mayo...">
+                        </div>
+                    </div>
+
+                    <!-- NUEVO: Adjuntar archivo PDF/DOC del programa -->
+                    <div class="checkbox-wrapper">
+                        <input type="checkbox" id="chkAdjuntarArchivo" onchange="toggleAdjuntarArchivo()">
+                        <div>
+                            <label for="chkAdjuntarArchivo">📎 Adjuntar programa oficial (PDF o Word, hasta 50 MB)</label>
+                            <small>La IA analizará el diseño curricular completo y buscará los contenidos específicos para tu materia y tema</small>
+                        </div>
+                    </div>
+
+                    <div class="conditional-field" id="archivoProgramaField">
+                        <div class="input-group">
+                            <label>Seleccioná el archivo del Diseño Curricular</label>
+                            <input type="file" id="archivoPrograma" accept=".pdf,.doc,.docx" onchange="handleFileSelect(event)">
+                            <small style="margin-top:0.5rem; color: var(--text-muted);">Formatos aceptados: PDF, Word (.doc, .docx). Tamaño máximo: 50 MB.</small>
+                            <div id="fileInfo" style="margin-top:0.5rem; font-weight:600; color: var(--accent-primary);"></div>
+                        </div>
+                    </div>
+
+                    <!-- Mantenemos el checkbox de texto por si prefiere pegar -->
+                    <div class="checkbox-wrapper" onclick="toggleProgramaPropio()">
+                        <input type="checkbox" id="chkProgramaPropio" onchange="toggleProgramaPropio()">
+                        <div>
+                            <label for="chkProgramaPropio">📝 O pegar el programa manualmente</label>
+                            <small>Si preferís, pegá acá los contenidos, objetivos o fundamentación de tu programa</small>
+                        </div>
+                    </div>
+
+                    <div class="conditional-field" id="programaPropioField">
+                        <div class="input-group">
+                            <label>Contenidos y Objetivos del Programa</label>
+                            <textarea id="programaTexto" placeholder="Pegá acá los contenidos, objetivos o fundamentación de tu programa..."></textarea>
+                        </div>
+                    </div>
+
+                    <div class="info-box" id="infoIA" style="display: none;">
+                        💡 <strong>Perfecto:</strong> La IA analizará el archivo adjunto y propondrá una planificación alineada al Diseño Curricular de <strong id="jurisdiccionIA">tu provincia</strong> para <strong id="nivelIA">tu nivel</strong>.
+                    </div>
+                </div>
+                <div class="wizard-step" data-step="4">
+                    <div class="step-title">🎯 Tipo de Planificación</div>
+                    <div class="step-description">Seleccioná el alcance temporal</div>
+                    <div class="form-grid"><div class="input-group" style="grid-column: 1 / -1;"><label>Tipo de Planificación *</label><select id="tipoPlanificacion"><option value="">Seleccionar...</option><option value="Anual">📅 Planificación Anual</option><option value="UnidadDidactica">📖 Unidad Didáctica / Mensual</option><option value="Proyecto">🚀 Proyecto Áulico</option></select></div></div>
+                    <div class="info-box" style="margin-top: 1.5rem;"><strong>✨ Bonus:</strong> Una vez generada, podrás editar, descargar y sincronizar.</div>
+                </div>
+                <div class="wizard-navigation">
+                    <button class="btn btn-secondary" id="btnPrev" onclick="changeStep(-1)" style="visibility: hidden;">← Anterior</button>
+                    <button class="btn btn-primary" id="btnNext" onclick="changeStep(1)">Siguiente →</button>
+                    <button class="btn btn-primary" id="btnGenerate" onclick="generatePlanning()" style="display: none;" disabled>🚀 Generar Planificación Profesional</button>
+                </div>
+            </section>
+
+            <div class="preview-section" id="previewSection">
+                <div class="loading-overlay" id="loadingOverlay"><div class="spinner"></div><div class="loading-text">Analizando el Diseño Curricular...</div><div class="loading-subtext">La IA está redactando tu planificación</div></div>
+                <div class="preview-header"><h1>Planificación</h1><p>Ciclo Lectivo 2026</p></div>
+                <div class="preview-content">
+                    <h3>🏫 Datos Institucionales</h3>
+                    <p><strong>Escuela:</strong> <span class="editable-field" id="previewColegio"></span></p>
+                    <p><strong>Jurisdicción:</strong> <span class="editable-field" id="previewJurisdiccion"></span></p>
+                    <p><strong>Nivel:</strong> <span class="editable-field" id="previewNivel"></span> - <span class="editable-field" id="previewAnio"></span></p>
+                    <p><strong>Materia:</strong> <span class="editable-field" id="previewMateria"></span> | <strong>Curso:</strong> <span class="editable-field" id="previewCurso"></span></p>
+                    <p><strong>Carga Horaria:</strong> <span class="editable-field" id="previewCarga"></span> horas semanales</p>
+                    <h3>📚 Tema / Unidad</h3><p class="editable-field" id="previewTema"></p>
+                    <h3>🎯 Fundamentación</h3><div class="editable-field" id="previewFundamentacion"></div>
+                    <h3>🎓 Propósitos y Objetivos</h3><div class="editable-field" id="previewObjetivos"></div>
+                    <h3>📋 Contenidos</h3><div class="editable-field" id="previewContenidos"></div>
+                    <h3>👨‍🏫 Estrategias Didácticas</h3><div class="editable-field" id="previewEstrategias"></div>
+                    <h3> Evaluación</h3><div class="editable-field" id="previewEvaluacion"></div>
+                    <div style="margin-top: 2rem; padding: 1.5rem; background: rgba(116, 185, 255, 0.1); border-radius: 12px; text-align: center;">
+                        <p><strong>✨ Planificación generada con IA y 100% editable</strong></p>
+                        <div style="display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap;">
+                            <button class="btn btn-primary"> Guardar</button>
+                            <button class="btn btn-secondary" onclick="exportCalendarToPDF()">📥 Descargar PDF</button>
+                            <button class="btn btn-secondary"> Exportar Word</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- CALENDARIO MEJORADO -->
+            <section id="calendario" class="card">
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem;">
+                    <h2><span>🗓️</span> Calendario Integrado</h2>
+                    <div class="action-bar">
+                        <button class="action-btn btn-sync" data-min-plan="maestro" onclick="handleRestrictedClick('sync')">🔄 Sync Calendar</button>
+                        <button class="action-btn" id="pdfCalendarBtn" onclick="exportCalendarToPDF()">📥 PDF Calendario <span id="pdfSpinner" style="display:none;">⏳</span></button>
+                    </div>
+                </div>
+                <div class="month-selector" id="monthSelector"></div>
+                <div class="calendar-header">
+                    <div class="current-month"><button class="nav-btn" id="prevMonth">◀</button><span id="displayMonthName">Mayo</span> <span id="displayYear">2026</span><button class="nav-btn" id="nextMonth">▶</button></div>
+                </div>
+                <div class="search-container">
+                    <input type="text" id="searchEvents" placeholder="Buscar eventos...">
+                </div>
+                <div class="search-results" id="searchResults" style="display: none;"></div>
+                <div class="calendar-grid" id="calendarGrid"></div>
+                <div class="weekly-agenda" id="weeklyAgenda">
+                    <h4>📅 Agenda de la semana</h4>
+                    <ul id="weeklyList"></ul>
+                </div>
+                <div style="margin-bottom: 0.5rem; font-weight: 600;">📝 Agregar/Ver Eventos</div>
+                <div class="event-types">
+                    <button class="event-btn" data-type="Examen" data-imp="true">📝 Examen</button>
+                    <button class="event-btn" data-type="Acto" data-imp="true">🇷 Acto</button>
+                    <button class="event-btn" data-type="Cumpleaños" data-imp="true">🎂 Cumpleaños</button>
+                    <button class="event-btn" data-type="Meet" data-imp="false">📹 Meet</button>
+                    <button class="event-btn" data-type="Reunión" data-imp="false">👥 Reunión</button>
+                    <button class="event-btn" data-type="Repaso" data-imp="false">📚 Repaso</button>
+                    <button class="event-btn" data-type="Evento" data-imp="false">📅 Evento</button>
+                </div>
+                <div class="legend">
+                    <div class="legend-item"><div class="legend-color" style="background:var(--cal-holiday)"></div>Feriados</div>
+                    <div class="legend-item"><div class="legend-color" style="background:var(--event-exam)"></div>Importante</div>
+                    <div class="legend-item">🔔 Recordatorio (-3 días)</div>
+                </div>
+            </section>
+
+            <!-- RECURSOS Y PLANES -->
+            <section id="recursos" class="card">
+                <h2><span>📦</span> Recursos Recomendados</h2>
+                <div class="tip-box" id="tipRecursos">💡 <strong>Tip:</strong> Los recursos con 🔒 están disponibles según tu versión. <span style="display:block; margin-top:0.5rem; font-size:0.9rem;">🏫 Plan Inicial: básico | 🎓 Plan Maestro: multi-escuela | 🚀 Plan Profesor: IA + Offline</span></div>
+                <div class="resource-category"><div class="category-title">📤 Exportación Básica</div><div class="resource-grid"><button class="resource-btn btn-storage" data-min-plan="inicial"><span>📥</span><div><div>Descargar PDF</div><small>Formato estándar</small></div></button><button class="resource-btn btn-storage" data-min-plan="inicial"><span>📄</span><div><div>Exportar Word</div><small>Editable .docx</small></div></button><button class="resource-btn btn-excel" id="exportExcelBtn" data-min-plan="maestro"><span></span><div><div>Planilla Excel</div><small>Sábanas de notas</small></div></button></div></div>
+                <div class="resource-category"><div class="category-title">✨ Inteligencia Artificial <span class="badge-new">NEW</span></div><div class="resource-grid"><button class="resource-btn btn-ai locked" data-min-plan="profesor"><span>📐</span><div><div>Generar Rúbrica</div><small>Evaluación automática 🔒</small></div></button><button class="resource-btn btn-ai locked" data-min-plan="profesor"><span>📝</span><div><div>Asistente Planificación</div><small>Secuencia didáctica 🔒</small></div></button><button class="resource-btn btn-ai locked" data-min-plan="profesor"><span>🔍</span><div><div>Creador de Preguntas</div><small>Cuestionario rápido 🔒</small></div></button></div></div>
+                <div class="resource-category"><div class="category-title">☁️ Almacenamiento y Diseño</div><div class="resource-grid"><button class="resource-btn btn-storage" data-min-plan="maestro"><span>📁</span><div><div>Google Drive</div><small>Guardar en la nube</small></div></button><button class="resource-btn btn-storage" data-min-plan="maestro"><span>🎨</span><div><div>Diseñar en Canva</div><small>Plantillas visuales</small></div></button><button class="resource-btn btn-qr" data-min-plan="maestro"><span></span><div><div>Generar Código QR</div><small>Para proyectar</small></div></button></div></div>
+                <div class="resource-category"><div class="category-title">📱 Comunicación</div><div class="resource-grid"><button class="resource-btn btn-comm" data-min-plan="maestro"><span>📱</span><div><div>WhatsApp</div><small>Compartir rápido</small></div></button><button class="resource-btn btn-comm" data-min-plan="maestro"><span>🏫</span><div><div>Google Classroom</div><small>Publicar en clase</small></div></button><button class="resource-btn btn-comm" data-min-plan="maestro"><span>🔄</span><div><div>Sincronizar Calendario</div><small>Google/Outlook</small></div></button></div></div>
+                <div class="resource-category" style="background: linear-gradient(135deg, rgba(253,203,110,0.1), rgba(255,234,200,0.1)); padding: 1.2rem; border-radius: 16px; border: 2px dashed #fdcb6e;">
+                    <div class="category-title" style="color: #5a523f;">🎒 Plan B - Sin Conexión</div>
+                    <div class="resource-grid"><button class="resource-btn btn-offline locked" data-min-plan="profesor"><span style="font-size:1.5rem;">💾</span><div style="flex:1;"><div style="font-size:1.1rem; margin-bottom:0.3rem;">Empaquetar Semana Completa</div><small>Descargar TODO para llevar en pendrive.</small><span style="background:#fdcb6e; color:#5a523f; padding:0.2rem 0.6rem; border-radius:20px; font-weight:700;">🔒 Solo Profesor</span></div></button></div>
+                </div>
+                <div style="margin-top: 1.5rem; text-align: center;"><button class="resource-btn btn-premium" style="margin:0 auto; padding:1rem 2rem;" onclick="contactWhatsApp('profesor')"><span>⭐</span><div><div>Desbloquear más funciones</div><small>Accedé a IA, almacenamiento ilimitado y más</small></div><span style="margin-left:auto; font-size:1.2rem;">→</span></button></div>
+            </section>
+
+            <section id="planes" class="card" style="padding-bottom: 1rem;">
+                <h2><span>🚀</span> Elegí tu plan</h2>
+                <div class="plans-grid">
+                    <div class="plan-card" data-plan="inicial"><h3> Plan Inicial</h3><div class="plan-price">$0</div><ul class="plan-features"><li>✅ Planificación básica manual</li><li>✅ Exportar PDF/Word</li><li>✅ Calendario simple</li><li>❌ Multi‑curso & cloud</li><li>❌ IA & Offline</li></ul><button class="plan-btn btn-outline" onclick="setPlan('inicial')">Actual</button></div>
+                    <div class="plan-card popular" data-plan="maestro"><div class="plan-badge">Popular</div><h3>🎓 Plan Maestro</h3><div class="plan-price">$3.999/mes</div><ul class="plan-features"><li>✅ Multi‑curso & escuelas</li><li>✅ Google Drive/OneDrive</li><li>✅ QR & Classroom</li><li>✅ Exportación Excel</li><li>❌ IA & Offline</li></ul><button class="plan-btn btn-filled" onclick="contactWhatsApp('maestro')">Contratar</button></div>
+                    <div class="plan-card" data-plan="profesor"><h3>🚀 Plan Profesor</h3><div class="plan-price">$5.999/mes</div><ul class="plan-features"><li>✅ Todo Maestro +</li><li>✅ IA: Rúbricas & Planif.</li><li>✅ Plan B Offline</li><li>✅ Soporte prioritario</li></ul><button class="plan-btn btn-filled" onclick="contactWhatsApp('profesor')">Contratar</button></div>
+                </div>
+            </section>
+        </div>
+        <footer>Hecho con ❤️ para docentes argentinos | Versión Beta 2026</footer>
+    </div>
+
+    <!-- MODAL DE EVENTO -->
+    <div id="eventModal" class="event-modal">
+        <div class="event-modal-content">
+            <h3 id="modalTitle">Nuevo evento</h3>
+            <label>Tipo</label>
+            <select id="modalEventType">
+                <option value="Examen">📝 Examen</option>
+                <option value="Acto">🇷 Acto</option>
+                <option value="Cumpleaños">🎂 Cumpleaños</option>
+                <option value="Meet">📹 Meet</option>
+                <option value="Reunión">👥 Reunión</option>
+                <option value="Repaso">📚 Repaso</option>
+                <option value="Evento">📅 Evento</option>
+            </select>
+            <label>Nombre</label>
+            <input type="text" id="modalEventName" placeholder="Nombre del evento">
+            <label>Color</label>
+            <div class="color-picker" id="colorPicker">
+                <div class="color-option" style="background: #FFC3C3" data-color="var(--event-exam)"></div>
+                <div class="color-option" style="background: #FDFD96" data-color="var(--event-party)"></div>
+                <div class="color-option" style="background: #C3E0FF" data-color="var(--event-meet)"></div>
+                <div class="color-option" style="background: #FFD1DC" data-color="var(--event-imp)"></div>
+                <div class="color-option" style="background: #BAFFC9" data-color="#BAFFC9"></div>
+                <div class="color-option" style="background: #E0D4FF" data-color="var(--btn-ai)"></div>
+            </div>
+            <label><input type="checkbox" id="modalEventImportant"> Importante (recordatorio 3 días antes)</label>
+            <div class="event-modal-buttons">
+                <button class="btn btn-secondary" onclick="closeEventModal()">Cancelar</button>
+                <button class="btn btn-primary" id="saveEventBtn" style="width: auto;">Guardar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Firebase y Script principal -->
+    <script type="module" src="script.js"></script>
+</body>
+</html>
