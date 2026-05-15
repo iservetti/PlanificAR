@@ -3,18 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PlanificAR 🇦🇷</title>
+    <title>PlanificAR</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🇦🇷</text></svg>">
     <link rel="stylesheet" href="style.css">
-    <!-- SheetJS para exportación Excel -->
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
-    <!-- jsPDF para exportación PDF -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 </head>
 <body>
     <!-- LANDING PAGE -->
     <div id="landingPage" class="landing-page">
-        <h1>PlanificAR 🇦🇷</h1>
+        <h1>PlanificAR</h1>
         <p>Planificaciones inteligentes, calendario y recursos para docentes argentinos.</p>
         <button class="auth-btn" id="landingLoginBtn" style="font-size: 1.2rem; padding: 1rem 2.5rem;">
             <span style="font-size:1.5rem;">G</span> Iniciar sesión con Google
@@ -27,7 +25,7 @@
             <button class="hamburger-btn" id="hamburgerBtn" aria-label="Abrir menú de navegación">
                 <span></span><span></span><span></span>
             </button>
-            <div class="menu-logo">PlanificAR 🇦</div>
+            <div class="menu-logo">PlanificAR</div>
             <div class="menu-links" id="menuLinks">
                 <a href="#generador" class="menu-link active">Generar</a>
                 <a href="#calendario" class="menu-link">Calendario</a>
@@ -88,54 +86,15 @@
                         <div class="input-group" style="grid-column: 1 / -1;"><label>Email (opcional)</label><input type="email" id="email" placeholder="docente@ejemplo.com"></div>
                     </div>
                 </div>
-                <!-- STEP 3 MEJORADO CON ADJUNTAR ARCHIVO -->
                 <div class="wizard-step" data-step="3">
                     <div class="step-title">📚 ¿Qué vas a enseñar?</div>
                     <div class="step-description">Definimos los temas y contenidos de tu planificación</div>
-                    <div class="form-grid">
-                        <div class="input-group" style="grid-column: 1 / -1;">
-                            <label>Tema / Unidad *</label>
-                            <input type="text" id="tema" placeholder="Ej: Fracciones decimales, Revolución de Mayo...">
-                        </div>
-                    </div>
-
-                    <!-- NUEVO: Adjuntar archivo PDF/DOC del programa -->
-                    <div class="checkbox-wrapper">
-                        <input type="checkbox" id="chkAdjuntarArchivo" onchange="toggleAdjuntarArchivo()">
-                        <div>
-                            <label for="chkAdjuntarArchivo">📎 Adjuntar programa oficial (PDF o Word, hasta 50 MB)</label>
-                            <small>La IA analizará el diseño curricular completo y buscará los contenidos específicos para tu materia y tema</small>
-                        </div>
-                    </div>
-
-                    <div class="conditional-field" id="archivoProgramaField">
-                        <div class="input-group">
-                            <label>Seleccioná el archivo del Diseño Curricular</label>
-                            <input type="file" id="archivoPrograma" accept=".pdf,.doc,.docx" onchange="handleFileSelect(event)">
-                            <small style="margin-top:0.5rem; color: var(--text-muted);">Formatos aceptados: PDF, Word (.doc, .docx). Tamaño máximo: 50 MB.</small>
-                            <div id="fileInfo" style="margin-top:0.5rem; font-weight:600; color: var(--accent-primary);"></div>
-                        </div>
-                    </div>
-
-                    <!-- Mantenemos el checkbox de texto por si prefiere pegar -->
-                    <div class="checkbox-wrapper" onclick="toggleProgramaPropio()">
-                        <input type="checkbox" id="chkProgramaPropio" onchange="toggleProgramaPropio()">
-                        <div>
-                            <label for="chkProgramaPropio">📝 O pegar el programa manualmente</label>
-                            <small>Si preferís, pegá acá los contenidos, objetivos o fundamentación de tu programa</small>
-                        </div>
-                    </div>
-
-                    <div class="conditional-field" id="programaPropioField">
-                        <div class="input-group">
-                            <label>Contenidos y Objetivos del Programa</label>
-                            <textarea id="programaTexto" placeholder="Pegá acá los contenidos, objetivos o fundamentación de tu programa..."></textarea>
-                        </div>
-                    </div>
-
-                    <div class="info-box" id="infoIA" style="display: none;">
-                        💡 <strong>Perfecto:</strong> La IA analizará el archivo adjunto y propondrá una planificación alineada al Diseño Curricular de <strong id="jurisdiccionIA">tu provincia</strong> para <strong id="nivelIA">tu nivel</strong>.
-                    </div>
+                    <div class="form-grid"><div class="input-group" style="grid-column: 1 / -1;"><label>Tema / Unidad *</label><input type="text" id="tema" placeholder="Ej: Fracciones decimales, Revolución de Mayo..."></div></div>
+                    <div class="checkbox-wrapper"><input type="checkbox" id="chkAdjuntarArchivo" onchange="toggleAdjuntarArchivo()"><div><label for="chkAdjuntarArchivo">📎 Adjuntar programa oficial (PDF o Word, hasta 50 MB)</label><small>La IA analizará el diseño curricular completo</small></div></div>
+                    <div class="conditional-field" id="archivoProgramaField"><div class="input-group"><label>Seleccioná el archivo del Diseño Curricular</label><input type="file" id="archivoPrograma" accept=".pdf,.doc,.docx" onchange="handleFileSelect(event)"><small style="margin-top:0.5rem; color: var(--text-muted);">Formatos aceptados: PDF, Word (.doc, .docx). Tamaño máximo: 50 MB.</small><div id="fileInfo" style="margin-top:0.5rem; font-weight:600; color: var(--accent-primary);"></div></div></div>
+                    <div class="checkbox-wrapper" onclick="toggleProgramaPropio()"><input type="checkbox" id="chkProgramaPropio" onchange="toggleProgramaPropio()"><div><label for="chkProgramaPropio">📝 O pegar el programa manualmente</label><small>Pegá acá los contenidos de tu programa</small></div></div>
+                    <div class="conditional-field" id="programaPropioField"><div class="input-group"><label>Contenidos y Objetivos del Programa</label><textarea id="programaTexto" placeholder="Pegá acá los contenidos..."></textarea></div></div>
+                    <div class="info-box" id="infoIA" style="display: none;">💡 <strong>Perfecto:</strong> La IA analizará el archivo adjunto y propondrá una planificación alineada al Diseño Curricular de <strong id="jurisdiccionIA">tu provincia</strong> para <strong id="nivelIA">tu nivel</strong>.</div>
                 </div>
                 <div class="wizard-step" data-step="4">
                     <div class="step-title">🎯 Tipo de Planificación</div>
@@ -172,6 +131,8 @@
                             <button class="btn btn-primary"> Guardar</button>
                             <button class="btn btn-secondary" onclick="exportCalendarToPDF()">📥 Descargar PDF</button>
                             <button class="btn btn-secondary"> Exportar Word</button>
+                            <button class="btn btn-secondary" onclick="shareCurrentPlanification('whatsapp')">📱 Compartir</button>
+                            <button class="btn btn-secondary" onclick="shareCurrentPlanification('email')">✉️ Enviar</button>
                         </div>
                     </div>
                 </div>
@@ -182,7 +143,8 @@
                 <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem;">
                     <h2><span>🗓️</span> Calendario Integrado</h2>
                     <div class="action-bar">
-                        <button class="action-btn btn-sync" data-min-plan="maestro" onclick="handleRestrictedClick('sync')">🔄 Sync Calendar</button>
+                        <button class="action-btn btn-sync" data-min-plan="maestro" onclick="syncWithGoogleCalendar()">🔄 Sync Calendar</button>
+                        <button class="action-btn" onclick="connectGoogleCalendar()">🔗 Conectar Google Calendar</button>
                         <button class="action-btn" id="pdfCalendarBtn" onclick="exportCalendarToPDF()">📥 PDF Calendario <span id="pdfSpinner" style="display:none;">⏳</span></button>
                     </div>
                 </div>
@@ -190,15 +152,10 @@
                 <div class="calendar-header">
                     <div class="current-month"><button class="nav-btn" id="prevMonth">◀</button><span id="displayMonthName">Mayo</span> <span id="displayYear">2026</span><button class="nav-btn" id="nextMonth">▶</button></div>
                 </div>
-                <div class="search-container">
-                    <input type="text" id="searchEvents" placeholder="Buscar eventos...">
-                </div>
+                <div class="search-container"><input type="text" id="searchEvents" placeholder="Buscar eventos..."></div>
                 <div class="search-results" id="searchResults" style="display: none;"></div>
                 <div class="calendar-grid" id="calendarGrid"></div>
-                <div class="weekly-agenda" id="weeklyAgenda">
-                    <h4>📅 Agenda de la semana</h4>
-                    <ul id="weeklyList"></ul>
-                </div>
+                <div class="weekly-agenda" id="weeklyAgenda"><h4>📅 Agenda de la semana</h4><ul id="weeklyList"></ul></div>
                 <div style="margin-bottom: 0.5rem; font-weight: 600;">📝 Agregar/Ver Eventos</div>
                 <div class="event-types">
                     <button class="event-btn" data-type="Examen" data-imp="true">📝 Examen</button>
@@ -216,10 +173,19 @@
                 </div>
             </section>
 
-            <!-- RECURSOS Y PLANES -->
+            <!-- RECURSOS MEJORADOS -->
             <section id="recursos" class="card">
                 <h2><span>📦</span> Recursos Recomendados</h2>
                 <div class="tip-box" id="tipRecursos">💡 <strong>Tip:</strong> Los recursos con 🔒 están disponibles según tu versión. <span style="display:block; margin-top:0.5rem; font-size:0.9rem;">🏫 Plan Inicial: básico | 🎓 Plan Maestro: multi-escuela | 🚀 Plan Profesor: IA + Offline</span></div>
+                
+                <!-- Estadísticas de uso -->
+                <div class="resource-category">
+                    <div class="category-title">📊 Mis Estadísticas</div>
+                    <div id="statsContainer" style="padding: 1rem; background: rgba(116,185,255,0.1); border-radius: var(--radius-md); margin-bottom: 1rem;">
+                        <p>Cargando estadísticas...</p>
+                    </div>
+                </div>
+
                 <div class="resource-category"><div class="category-title">📤 Exportación Básica</div><div class="resource-grid"><button class="resource-btn btn-storage" data-min-plan="inicial"><span>📥</span><div><div>Descargar PDF</div><small>Formato estándar</small></div></button><button class="resource-btn btn-storage" data-min-plan="inicial"><span>📄</span><div><div>Exportar Word</div><small>Editable .docx</small></div></button><button class="resource-btn btn-excel" id="exportExcelBtn" data-min-plan="maestro"><span></span><div><div>Planilla Excel</div><small>Sábanas de notas</small></div></button></div></div>
                 <div class="resource-category"><div class="category-title">✨ Inteligencia Artificial <span class="badge-new">NEW</span></div><div class="resource-grid"><button class="resource-btn btn-ai locked" data-min-plan="profesor"><span>📐</span><div><div>Generar Rúbrica</div><small>Evaluación automática 🔒</small></div></button><button class="resource-btn btn-ai locked" data-min-plan="profesor"><span>📝</span><div><div>Asistente Planificación</div><small>Secuencia didáctica 🔒</small></div></button><button class="resource-btn btn-ai locked" data-min-plan="profesor"><span>🔍</span><div><div>Creador de Preguntas</div><small>Cuestionario rápido 🔒</small></div></button></div></div>
                 <div class="resource-category"><div class="category-title">☁️ Almacenamiento y Diseño</div><div class="resource-grid"><button class="resource-btn btn-storage" data-min-plan="maestro"><span>📁</span><div><div>Google Drive</div><small>Guardar en la nube</small></div></button><button class="resource-btn btn-storage" data-min-plan="maestro"><span>🎨</span><div><div>Diseñar en Canva</div><small>Plantillas visuales</small></div></button><button class="resource-btn btn-qr" data-min-plan="maestro"><span></span><div><div>Generar Código QR</div><small>Para proyectar</small></div></button></div></div>
@@ -228,7 +194,6 @@
                     <div class="category-title" style="color: #5a523f;">🎒 Plan B - Sin Conexión</div>
                     <div class="resource-grid"><button class="resource-btn btn-offline locked" data-min-plan="profesor"><span style="font-size:1.5rem;">💾</span><div style="flex:1;"><div style="font-size:1.1rem; margin-bottom:0.3rem;">Empaquetar Semana Completa</div><small>Descargar TODO para llevar en pendrive.</small><span style="background:#fdcb6e; color:#5a523f; padding:0.2rem 0.6rem; border-radius:20px; font-weight:700;">🔒 Solo Profesor</span></div></button></div>
                 </div>
-                <div style="margin-top: 1.5rem; text-align: center;"><button class="resource-btn btn-premium" style="margin:0 auto; padding:1rem 2rem;" onclick="contactWhatsApp('profesor')"><span>⭐</span><div><div>Desbloquear más funciones</div><small>Accedé a IA, almacenamiento ilimitado y más</small></div><span style="margin-left:auto; font-size:1.2rem;">→</span></button></div>
             </section>
 
             <section id="planes" class="card" style="padding-bottom: 1rem;">
@@ -243,7 +208,7 @@
         <footer>Hecho con ❤️ para docentes argentinos | Versión Beta 2026</footer>
     </div>
 
-    <!-- MODAL DE EVENTO -->
+    <!-- MODAL DE EVENTO (con repetición) -->
     <div id="eventModal" class="event-modal">
         <div class="event-modal-content">
             <h3 id="modalTitle">Nuevo evento</h3>
@@ -269,6 +234,17 @@
                 <div class="color-option" style="background: #E0D4FF" data-color="var(--btn-ai)"></div>
             </div>
             <label><input type="checkbox" id="modalEventImportant"> Importante (recordatorio 3 días antes)</label>
+            <label style="margin-top: 1rem;">Repetir evento</label>
+            <select id="modalEventRepeat">
+                <option value="none">No repetir</option>
+                <option value="weekly">Cada semana</option>
+                <option value="monthly">Cada mes</option>
+                <option value="yearly">Cada año</option>
+            </select>
+            <div id="repeatCountField" style="display: none;">
+                <label>¿Cuántas veces?</label>
+                <input type="number" id="modalRepeatCount" min="1" max="52" value="4">
+            </div>
             <div class="event-modal-buttons">
                 <button class="btn btn-secondary" onclick="closeEventModal()">Cancelar</button>
                 <button class="btn btn-primary" id="saveEventBtn" style="width: auto;">Guardar</button>
@@ -276,7 +252,7 @@
         </div>
     </div>
 
-    <!-- Firebase y Script principal -->
+    <!-- Firebase y Script -->
     <script type="module" src="script.js"></script>
 </body>
 </html>
