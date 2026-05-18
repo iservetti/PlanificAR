@@ -6,8 +6,20 @@
     <title>PlanificAR</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🇦🇷</text></svg>">
     <link rel="stylesheet" href="style.css">
+    <!-- SheetJS para exportación Excel -->
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <!-- jsPDF para exportación PDF -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <!-- Script inline para evitar flash blanco en modo oscuro -->
+    <script>
+        (function() {
+            const savedTheme = localStorage.getItem('theme');
+            const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            if (savedTheme === 'dark' || (!savedTheme && prefersDark)) {
+                document.documentElement.setAttribute('data-theme', 'dark');
+            }
+        })();
+    </script>
 </head>
 <body>
     <!-- LANDING PAGE -->
@@ -173,19 +185,14 @@
                 </div>
             </section>
 
-            <!-- RECURSOS MEJORADOS -->
+            <!-- RECURSOS Y PLANES -->
             <section id="recursos" class="card">
                 <h2><span>📦</span> Recursos Recomendados</h2>
                 <div class="tip-box" id="tipRecursos">💡 <strong>Tip:</strong> Los recursos con 🔒 están disponibles según tu versión. <span style="display:block; margin-top:0.5rem; font-size:0.9rem;">🏫 Plan Inicial: básico | 🎓 Plan Maestro: multi-escuela | 🚀 Plan Profesor: IA + Offline</span></div>
-                
-                <!-- Estadísticas de uso -->
-                <div class="resource-category">
-                    <div class="category-title">📊 Mis Estadísticas</div>
-                    <div id="statsContainer" style="padding: 1rem; background: rgba(116,185,255,0.1); border-radius: var(--radius-md); margin-bottom: 1rem;">
-                        <p>Cargando estadísticas...</p>
-                    </div>
-                </div>
-
+                <div class="resource-category"><div class="category-title">📊 Mis Estadísticas</div><div id="statsContainer" style="padding: 1rem; background: rgba(116,185,255,0.1); border-radius: var(--radius-md); margin-bottom: 1rem;"><p>Cargando estadísticas...</p></div></div>
+                <div class="resource-category"><div class="category-title">📈 Productividad Semanal</div><div id="productivityContainer" style="padding: 1rem; background: rgba(116,185,255,0.1); border-radius: var(--radius-md); margin-bottom: 1rem;"><p>Cargando productividad...</p></div></div>
+                <div class="resource-category"><div class="category-title">📚 Biblioteca de Recursos</div><div id="resourceLibrary" style="padding: 1rem; background: rgba(116,185,255,0.1); border-radius: var(--radius-md);"><p>Cargando biblioteca...</p></div></div>
+                <div class="resource-category"><button class="resource-btn btn-premium" onclick="exportYearBackup()" style="margin:0 auto; padding:1rem 2rem;"><span>📦</span><div><div>Exportar backup anual</div><small>Todas las planificaciones del año</small></div></button></div>
                 <div class="resource-category"><div class="category-title">📤 Exportación Básica</div><div class="resource-grid"><button class="resource-btn btn-storage" data-min-plan="inicial"><span>📥</span><div><div>Descargar PDF</div><small>Formato estándar</small></div></button><button class="resource-btn btn-storage" data-min-plan="inicial"><span>📄</span><div><div>Exportar Word</div><small>Editable .docx</small></div></button><button class="resource-btn btn-excel" id="exportExcelBtn" data-min-plan="maestro"><span></span><div><div>Planilla Excel</div><small>Sábanas de notas</small></div></button></div></div>
                 <div class="resource-category"><div class="category-title">✨ Inteligencia Artificial <span class="badge-new">NEW</span></div><div class="resource-grid"><button class="resource-btn btn-ai locked" data-min-plan="profesor"><span>📐</span><div><div>Generar Rúbrica</div><small>Evaluación automática 🔒</small></div></button><button class="resource-btn btn-ai locked" data-min-plan="profesor"><span>📝</span><div><div>Asistente Planificación</div><small>Secuencia didáctica 🔒</small></div></button><button class="resource-btn btn-ai locked" data-min-plan="profesor"><span>🔍</span><div><div>Creador de Preguntas</div><small>Cuestionario rápido 🔒</small></div></button></div></div>
                 <div class="resource-category"><div class="category-title">☁️ Almacenamiento y Diseño</div><div class="resource-grid"><button class="resource-btn btn-storage" data-min-plan="maestro"><span>📁</span><div><div>Google Drive</div><small>Guardar en la nube</small></div></button><button class="resource-btn btn-storage" data-min-plan="maestro"><span>🎨</span><div><div>Diseñar en Canva</div><small>Plantillas visuales</small></div></button><button class="resource-btn btn-qr" data-min-plan="maestro"><span></span><div><div>Generar Código QR</div><small>Para proyectar</small></div></button></div></div>
@@ -208,7 +215,7 @@
         <footer>Hecho con ❤️ para docentes argentinos | Versión Beta 2026</footer>
     </div>
 
-    <!-- MODAL DE EVENTO (con repetición) -->
+    <!-- MODAL DE EVENTO -->
     <div id="eventModal" class="event-modal">
         <div class="event-modal-content">
             <h3 id="modalTitle">Nuevo evento</h3>
@@ -252,7 +259,6 @@
         </div>
     </div>
 
-    <!-- Firebase y Script -->
     <script type="module" src="script.js"></script>
 </body>
 </html>

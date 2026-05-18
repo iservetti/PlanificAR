@@ -1,53 +1,59 @@
 // =========================================
-// STORAGE MANAGER (encapsula Firestore)
+// FUNCIÓN DE SANITIZACIÓN (contra XSS)
+// =========================================
+function sanitizarHTML(texto) {
+    if (!texto) return '';
+    return String(texto)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+// =========================================
+// STORAGE MANAGER (sin imports dinámicos)
 // =========================================
 const StorageManager = {
     db: null,
     init(dbInstance) { this.db = dbInstance; },
     async getUser(uid) {
-        const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
         return await getDoc(doc(this.db, "users", uid));
     },
     async saveUser(uid, data) {
-        const { doc, setDoc } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
         return await setDoc(doc(this.db, "users", uid), data, { merge: true });
     },
     async loadEvents(uid) {
-        const { collection, getDocs } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
         const snapshot = await getDocs(collection(this.db, "users", uid, "events"));
         const events = {};
-        snapshot.forEach(doc => {
-            const data = doc.data();
+        snapshot.forEach(docSnap => {
+            const data = docSnap.data();
             const dateKey = `${data.day}-${data.month}-${data.year}`;
             if (!events[dateKey]) events[dateKey] = [];
-            events[dateKey].push({ id: doc.id, ...data });
+            events[dateKey].push({ id: docSnap.id, ...data });
         });
         return events;
     },
     async addEvent(uid, eventData) {
-        const { collection, addDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
         return await addDoc(collection(this.db, "users", uid, "events"), { ...eventData, createdAt: serverTimestamp() });
     },
     async updateEvent(uid, eventId, newData) {
-        const { doc, updateDoc } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
         return await updateDoc(doc(this.db, "users", uid, "events", eventId), newData);
     },
     async deleteEvent(uid, eventId) {
-        const { doc, deleteDoc } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
         return await deleteDoc(doc(this.db, "users", uid, "events", eventId));
     },
     async addPlanificacion(uid, data) {
-        const { collection, addDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
         return await addDoc(collection(this.db, "users", uid, "planificaciones"), { ...data, createdAt: serverTimestamp() });
     }
 };
 
 // =========================================
-// FIREBASE
+// FIREBASE (imports estáticos completos)
 // =========================================
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { getFirestore, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getFirestore, doc, getDoc, setDoc, collection, getDocs, addDoc, updateDoc, deleteDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js";
 
 const firebaseConfig = {
@@ -127,8 +133,20 @@ async function loadUserData(uid) {
             await StorageManager.saveUser(uid, { email: auth.currentUser.email, plan: 'inicial', createdAt: serverTimestamp(), trialEnd: trialEndDate });
         }
         const isTrialActive = trialEndDate && now <= trialEndDate;
-        toggleFeatures(isTrialActive || currentPlan !== 'inicial');
-    } catch (error) { currentPlan = 'inicial'; toggleFeatures(false); }
+        const hasPaidPlan = currentPlan !== 'inicial';
+        toggleFeatures(isTrialActive || hasPaidPlan);
+    } catch (error) {
+        console.error("Error cargando datos desde Firestore. Usando datos locales.", error);
+        const savedPlan = localStorage.getItem('plan');
+        currentPlan = savedPlan || 'inicial';
+        trialEndDate = null;
+        toggleFeatures(currentPlan !== 'inicial');
+        if (trialBanner) {
+            trialBanner.style.display = 'block';
+            trialBanner.innerHTML = '⚠️ Error de conexión. Mostrando datos locales. Algunas funciones pueden estar limitadas.';
+            trialBanner.classList.add('urgent');
+        }
+    }
     localStorage.setItem('plan', currentPlan);
     updatePlanUI();
     updateTrialBanner();
@@ -137,7 +155,18 @@ async function loadUserData(uid) {
 }
 
 function toggleFeatures(enable) { const btn = document.getElementById('btnGenerate'); if (btn) btn.disabled = !enable; }
-function updateGenerateButtonState() { const btn = document.getElementById('btnGenerate'); if (btn) btn.disabled = false; }
+
+// =========================================
+// ESTADO DEL BOTÓN GENERAR (CORREGIDO)
+// =========================================
+function updateGenerateButtonState() {
+    const btn = document.getElementById('btnGenerate');
+    if (!btn) return;
+    const now = new Date();
+    const isTrialActive = trialEndDate && now <= trialEndDate;
+    const hasPaidPlan = currentPlan !== 'inicial';
+    btn.disabled = !(isTrialActive || hasPaidPlan);
+}
 
 function updateTrialBanner() {
     if (!trialBanner || !isUserLoggedIn) { trialBanner.style.display = 'none'; return; }
@@ -208,7 +237,7 @@ function handleFileSelect(event) {
     if (file.size > 50 * 1024 * 1024) { alert('El archivo es demasiado grande. Máximo 50 MB.'); event.target.value = ''; return; }
     if (!['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'].includes(file.type)) { alert('Formato no soportado.'); event.target.value = ''; return; }
     archivoProgramaSeleccionado = file;
-    document.getElementById('fileInfo').innerHTML = `✅ Archivo seleccionado: <strong>${file.name}</strong> (${(file.size / 1024 / 1024).toFixed(1)} MB)`;
+    document.getElementById('fileInfo').innerHTML = `✅ Archivo seleccionado: <strong>${sanitizarHTML(file.name)}</strong> (${(file.size / 1024 / 1024).toFixed(1)} MB)`;
 }
 
 // =========================================
@@ -271,7 +300,7 @@ function validateStep(step) {
 }
 
 // =========================================
-// GENERAR PLANIFICACIÓN (con Cloud Function)
+// GENERAR PLANIFICACIÓN (con feedback mejorado)
 // =========================================
 async function generatePlanWithAI(data) {
     try { const generatePlan = httpsCallable(functions, 'generatePlan'); const result = await generatePlan(data); return result.data; }
@@ -307,7 +336,16 @@ async function processPlanning(formData) {
         document.getElementById('previewContenidos').innerHTML = planData.contenidos;
         document.getElementById('previewEstrategias').innerHTML = planData.estrategias;
         document.getElementById('previewEvaluacion').innerHTML = planData.evaluacion;
-    } else { await simulateAIContent(); }
+    } else {
+        const banner = document.getElementById('trialBanner');
+        if (banner) {
+            banner.style.display = 'block';
+            banner.innerHTML = '⚠️ El asistente de IA no está disponible en este momento. Te generamos una estructura de ejemplo para que puedas trabajar.';
+            banner.classList.add('urgent');
+            setTimeout(() => { banner.style.display = 'none'; }, 5000);
+        }
+        await simulateAIContent();
+    }
     const uid = localStorage.getItem('userUid');
     if (uid) {
         const docRef = await StorageManager.addPlanificacion(uid, { colegio: document.getElementById('colegio').value, jurisdiccion: document.getElementById('jurisdiccion').value, nivel: document.getElementById('nivel').value, materia: document.getElementById('materia').value, tema: document.getElementById('tema').value, tipo: document.getElementById('tipoPlanificacion').value });
@@ -317,7 +355,10 @@ async function processPlanning(formData) {
 }
 
 async function simulateAIContent() {
-    const materia = document.getElementById('materia').value, nivel = document.getElementById('nivel').value, tema = document.getElementById('tema').value, jurisdiccion = document.getElementById('jurisdiccion').value;
+    const materia = sanitizarHTML(document.getElementById('materia').value);
+    const nivel = sanitizarHTML(document.getElementById('nivel').value);
+    const tema = sanitizarHTML(document.getElementById('tema').value);
+    const jurisdiccion = sanitizarHTML(document.getElementById('jurisdiccion').value);
     document.getElementById('previewFundamentacion').innerHTML = `<p>La enseñanza de <strong>${tema}</strong> en <strong>${materia}</strong> es fundamental según el Diseño Curricular de ${jurisdiccion}. Esta planificación busca que el estudiante construya significados desde sus saberes previos, fomentando el pensamiento crítico.</p>`;
     document.getElementById('previewObjetivos').innerHTML = `<ul><li>Comprender los conceptos fundamentales de ${tema}.</li><li>Aplicar procedimientos propios de ${materia}.</li><li>Desarrollar actitudes de responsabilidad y cooperación.</li></ul>`;
     document.getElementById('previewContenidos').innerHTML = `<p><strong>Conceptuales:</strong> ${tema}, propiedades y clasificación.</p><p><strong>Procedimentales:</strong> Resolución de problemas, análisis de casos.</p><p><strong>Actitudinales:</strong> Valoración del trabajo intelectual.</p>`;
@@ -380,7 +421,7 @@ async function loadUserEvents() { const uid = localStorage.getItem('userUid'); i
 function checkReminders() {
     if (!("Notification" in window) || Notification.permission !== "granted") return;
     const today = new Date(); const reminderDate = new Date(today); reminderDate.setDate(today.getDate() + 3);
-    Object.values(userEvents).flat().forEach(evt => { if (!evt.imp) return; if (new Date(evt.year, evt.month-1, evt.day).toDateString() === reminderDate.toDateString()) new Notification("Recordatorio PlanificAR", { body: `Faltan 3 días para: ${evt.name}` }); });
+    Object.values(userEvents).flat().forEach(evt => { if (!evt.imp) return; if (new Date(evt.year, evt.month-1, evt.day).toDateString() === reminderDate.toDateString()) new Notification("Recordatorio PlanificAR", { body: `Faltan 3 días para: ${sanitizarHTML(evt.name)}` }); });
 }
 
 let selectedDate = null;
@@ -418,7 +459,7 @@ eventModal.addEventListener('click', (e) => { if (e.target === eventModal) close
 saveEventBtn.addEventListener('click', async () => {
     if (!selectedDate) return;
     const uid = localStorage.getItem('userUid'); if (!uid) return;
-    const eventData = { day: selectedDate.day, month: selectedDate.month + 1, year: selectedDate.year, type: modalEventType.value, name: modalEventName.value || 'Sin título', imp: modalEventImportant.checked, color: selectedEventColor };
+    const eventData = { day: selectedDate.day, month: selectedDate.month + 1, year: selectedDate.year, type: modalEventType.value, name: sanitizarHTML(modalEventName.value) || 'Sin título', imp: modalEventImportant.checked, color: selectedEventColor };
     
     if (modalEventRepeat.value !== 'none') {
         try { const createRecurring = httpsCallable(functions, 'createRecurringEvent'); await createRecurring({ eventData, recurrence: { type: modalEventRepeat.value, count: parseInt(modalRepeatCount.value) } }); }
@@ -444,7 +485,7 @@ async function renderCalendar() {
     for (let day = 1; day <= daysInMonth; day++) {
         const dayOfWeek = new Date(currentYear, currentMonth, day).getDay(), dateKey = `${day}-${currentMonth+1}-${currentYear}`, holidayKey = `${day}-${currentMonth+1}`;
         let content = `<div style="font-weight:600; margin-bottom:2px;">${day}</div>`;
-        if (userEvents[dateKey]) userEvents[dateKey].forEach(evt => content += `<div class="event-tag-cell" draggable="true" data-id="${evt.id}" style="background: ${evt.color || 'var(--event-exam)'}">${evt.name}</div>`);
+        if (userEvents[dateKey]) userEvents[dateKey].forEach(evt => content += `<div class="event-tag-cell" draggable="true" data-id="${evt.id}" style="background: ${evt.color || 'var(--event-exam)'}">${sanitizarHTML(evt.name)}</div>`);
         let classes = 'calendar-day';
         if (!userEvents[dateKey]) classes += ' skeleton';
         if (today.getDate() === day && today.getMonth() === currentMonth && today.getFullYear() === currentYear) classes += ' today';
@@ -475,8 +516,8 @@ function updateSearchResults() {
     const query = searchInput.value.toLowerCase();
     if (!query) { searchResults.style.display = 'none'; return; }
     const results = [];
-    Object.entries(userEvents).forEach(([dateKey, events]) => events.forEach(evt => { if (evt.name.toLowerCase().includes(query) || evt.type.toLowerCase().includes(query)) results.push({ ...evt, date: dateKey }); }));
-    searchResults.innerHTML = results.length ? results.map(r => `<div onclick="goToDate('${r.date}')">📅 ${r.date} - ${r.name} (${r.type})</div>`).join('') : '<div>No se encontraron eventos.</div>';
+    Object.entries(userEvents).forEach(([dateKey, events]) => events.forEach(evt => { if (sanitizarHTML(evt.name).toLowerCase().includes(query) || sanitizarHTML(evt.type).toLowerCase().includes(query)) results.push({ ...evt, date: dateKey }); }));
+    searchResults.innerHTML = results.length ? results.map(r => `<div onclick="goToDate('${r.date}')">📅 ${r.date} - ${sanitizarHTML(r.name)} (${sanitizarHTML(r.type)})</div>`).join('') : '<div>No se encontraron eventos.</div>';
     searchResults.style.display = 'block';
 }
 window.goToDate = function(dateKey) { const [day, month, year] = dateKey.split('-').map(Number); currentMonth = month - 1; currentYear = year; loadUserEvents().then(() => renderCalendar()); document.querySelector('#calendario').scrollIntoView({ behavior: 'smooth' }); };
@@ -487,7 +528,7 @@ function updateWeeklyAgenda() {
     const weekEvents = [];
     Object.entries(userEvents).forEach(([dateKey, events]) => { const [d, m, y] = dateKey.split('-').map(Number); const eventDate = new Date(y, m-1, d); if (eventDate >= startOfWeek && eventDate <= endOfWeek) events.forEach(evt => weekEvents.push({ date: dateKey, ...evt })); });
     weekEvents.sort((a,b) => new Date(a.date.split('-')[2], a.date.split('-')[1]-1, a.date.split('-')[0]) - new Date(b.date.split('-')[2], b.date.split('-')[1]-1, b.date.split('-')[0]));
-    list.innerHTML = weekEvents.length ? weekEvents.map(e => `<li><span>📅 ${e.date}</span> <span style="background:${e.color||'var(--event-exam)'};padding:0 6px;border-radius:4px;">${e.name}</span></li>`).join('') : '<li>No hay eventos esta semana.</li>';
+    list.innerHTML = weekEvents.length ? weekEvents.map(e => `<li><span>📅 ${e.date}</span> <span style="background:${e.color||'var(--event-exam)'};padding:0 6px;border-radius:4px;">${sanitizarHTML(e.name)}</span></li>`).join('') : '<li>No hay eventos esta semana.</li>';
 }
 document.getElementById('prevMonth').addEventListener('click', async () => { currentMonth--; if (currentMonth < 0) { currentMonth = 11; currentYear--; } await loadUserEvents(); await renderCalendar(); });
 document.getElementById('nextMonth').addEventListener('click', async () => { currentMonth++; if (currentMonth > 11) { currentMonth = 0; currentYear++; } await loadUserEvents(); await renderCalendar(); });
@@ -500,7 +541,7 @@ monthNames.forEach((m, i) => { const btn = document.createElement('button'); btn
 document.getElementById('exportExcelBtn').addEventListener('click', () => {
     if (!isPlanSufficient('maestro')) { alert('🔒 Requiere Plan Maestro.'); return; }
     const eventsArray = [];
-    Object.entries(userEvents).forEach(([dateKey, events]) => events.forEach(evt => eventsArray.push({ 'Fecha': dateKey, 'Tipo': evt.type, 'Nombre': evt.name, 'Importante': evt.imp ? 'Sí' : 'No' })));
+    Object.entries(userEvents).forEach(([dateKey, events]) => events.forEach(evt => eventsArray.push({ 'Fecha': dateKey, 'Tipo': sanitizarHTML(evt.type), 'Nombre': sanitizarHTML(evt.name), 'Importante': evt.imp ? 'Sí' : 'No' })));
     if (eventsArray.length === 0) { alert('No hay eventos.'); return; }
     const ws = XLSX.utils.json_to_sheet(eventsArray), wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Eventos"); XLSX.writeFile(wb, `planificar_eventos_${currentMonth+1}_${currentYear}.xlsx`);
 });
@@ -512,7 +553,7 @@ function exportCalendarToPDF() {
         let y = 30;
         const events = Object.entries(userEvents).sort(([a], [b]) => { const [da, ma, ya] = a.split('-').map(Number), [db, mb, yb] = b.split('-').map(Number); return new Date(ya, ma-1, da) - new Date(yb, mb-1, db); });
         if (events.length === 0) doc.text('No hay eventos este mes.', 14, y);
-        else events.forEach(([dateKey, evts]) => evts.forEach(evt => { if (y > 270) { doc.addPage(); y = 20; } doc.setFontSize(11); doc.text(`${dateKey}: ${evt.name} (${evt.type})`, 14, y); y += 7; }));
+        else events.forEach(([dateKey, evts]) => evts.forEach(evt => { if (y > 270) { doc.addPage(); y = 20; } doc.setFontSize(11); doc.text(`${dateKey}: ${sanitizarHTML(evt.name)} (${sanitizarHTML(evt.type)})`, 14, y); y += 7; }));
         doc.save(`planificar_${currentMonth+1}_${currentYear}.pdf`); if (spinner) spinner.style.display = 'none';
     }, 100);
 }
@@ -526,7 +567,7 @@ async function loadUserStats() {
 }
 if (document.getElementById('statsContainer')) {
     loadUserStats().then(stats => {
-        if (stats) document.getElementById('statsContainer').innerHTML = `<p>📊 <strong>Planificaciones:</strong> ${stats.totalPlans}</p><p>📅 <strong>Eventos:</strong> ${stats.totalEvents}</p><p>🏆 <strong>Materias principales:</strong> ${stats.topMaterias.map(m => m.nombre).join(', ') || 'Ninguna aún'}</p>`;
+        if (stats) document.getElementById('statsContainer').innerHTML = `<p>📊 <strong>Planificaciones:</strong> ${stats.totalPlans}</p><p>📅 <strong>Eventos:</strong> ${stats.totalEvents}</p><p>🏆 <strong>Materias principales:</strong> ${stats.topMaterias.map(m => sanitizarHTML(m.nombre)).join(', ') || 'Ninguna aún'}</p>`;
         else document.getElementById('statsContainer').innerHTML = '<p>No se pudieron cargar las estadísticas.</p>';
     });
 }
@@ -554,6 +595,22 @@ window.toggleAdjuntarArchivo = toggleAdjuntarArchivo; window.handleFileSelect = 
 window.shareCurrentPlanification = shareCurrentPlanification;
 window.syncWithGoogleCalendar = syncWithGoogleCalendar;
 window.connectGoogleCalendar = connectGoogleCalendar;
+window.exportYearBackup = exportYearBackup;
+
+async function exportYearBackup() {
+    if (!isPlanSufficient('profesor')) { alert('🔒 Requiere Plan Profesor.'); return; }
+    try {
+        const generateBackup = httpsCallable(functions, 'generateYearBackup');
+        const result = await generateBackup({ year: currentYear });
+        const blob = new Blob([JSON.stringify(result.data.plans, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `planificar_backup_${currentYear}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+    } catch (error) { alert('Error al generar el backup.'); }
+}
 
 // =========================================
 // INICIALIZACIÓN
